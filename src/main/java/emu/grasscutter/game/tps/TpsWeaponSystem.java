@@ -6,7 +6,8 @@ import emu.grasscutter.data.common.FightPropData;
 import emu.grasscutter.data.excels.EquipAffixData;
 import emu.grasscutter.data.excels.tps.*;
 import emu.grasscutter.game.avatar.Avatar;
-import emu.grasscutter.game.entity.EntityWeapon;
+import emu.grasscutter.game.entity.*;
+import emu.grasscutter.game.props.FightProperty;
 import emu.grasscutter.game.inventory.*;
 import emu.grasscutter.game.player.Player;
 import emu.grasscutter.game.world.Scene;
@@ -151,6 +152,43 @@ public final class TpsWeaponSystem {
             item.setWeaponEntity(null);
             ensureWeaponEntity(item, scene);
         }
+    }
+
+    /**
+     * Share of a monster's max HP that one TPS weapon hit takes, replacing the damage the client
+     * computed; 0 keeps the client's damage. Set with {@code /tps damage}.
+     */
+    public static volatile float percentDamage = 0.02f;
+
+    /**
+     * The damage a hit deals on the server. A TPS weapon hit on a monster takes {@link
+     * #percentDamage} of its max HP; anything else keeps the client's damage. The client still shows
+     * its own damage numbers.
+     */
+    public static float adjustDamage(Scene scene, @Nullable GameEntity attacker, GameEntity target, float damage) {
+        if (percentDamage <= 0 || damage <= 0 || !(target instanceof EntityMonster)) return damage;
+        if (!isTpsAttack(scene, attacker)) return damage;
+        float maxHp = target.getFightProperty(FightProperty.FIGHT_PROP_MAX_HP);
+        return maxHp > 0 ? maxHp * percentDamage : damage;
+    }
+
+    /**
+     * Whether a hit comes from a TPS weapon: the weapon entity itself, the TPS traveler (who only
+     * shoots), or a bullet or grenade whose owner chain leads to either.
+     */
+    static boolean isTpsAttack(Scene scene, @Nullable GameEntity attacker) {
+        for (int depth = 0; depth < 8 && attacker != null; depth++) {
+            if (attacker instanceof EntityWeapon weapon) return isTpsWeaponGadget(weapon.getGadgetId());
+            if (attacker instanceof EntityAvatar avatar) return TpsAvatarSystem.isTpsAvatar(avatar.getAvatar());
+            if (!(attacker instanceof EntityClientGadget gadget)) return false;
+            if (isTpsWeaponGadget(gadget.getGadgetId())) return true;
+            attacker = scene.getEntityById(gadget.getOwnerEntityId());
+        }
+        return false;
+    }
+
+    private static boolean isTpsWeaponGadget(int gadgetId) {
+        return GameData.getTpsWeaponDataMap().values().stream().anyMatch(data -> data.getGadgetId() == gadgetId);
     }
 
     /** Owned avatars and the trial avatars of the current team (the TPS traveler) wearing TPS weapons. */

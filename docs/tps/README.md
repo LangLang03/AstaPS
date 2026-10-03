@@ -28,7 +28,12 @@ LittleIdol talents, which now load too.
 /tps wear 224001 224004   the field avatar wears the Glacia rifle and a fire grenade
 /tps refill          fill all ammunition and resend the weapons
 /tps ammo ...        ammunition experiments, see below
+/tps damage 2        each TPS weapon hit takes 2% of a monster's max HP (the default); off = client damage
 ```
+
+TPS weapon damage is settled on the server: a hit on a monster from a TPS weapon entity, the TPS
+traveler, or a bullet or grenade owned by either takes `percentDamage` of the monster's max HP instead
+of the damage the client computed. The client still shows its own damage numbers.
 
 ### Ammunition experiments
 

@@ -537,7 +537,9 @@ public class Scene {
             }
         }
 
-        target.damage(result.getDamage(), result.getAttackerId(), attackType);
+        float damage =
+                emu.grasscutter.game.tps.TpsWeaponSystem.adjustDamage(this, attacker, target, result.getDamage());
+        target.damage(damage, result.getAttackerId(), attackType);
 
         if (!(target instanceof EntityAvatar)) {
             EntityAvatar arlecAttacker = resolveArlecchinoAttacker(attacker);

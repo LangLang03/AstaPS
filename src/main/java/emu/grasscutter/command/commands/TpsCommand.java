@@ -16,7 +16,8 @@ import java.util.*;
             "accessory",
             "wear [<weaponId>...]",
             "refill",
-            "ammo [type slot|one] [current reserve|limit|<n>] [notify] [supply]"
+            "ammo [type slot|one] [current reserve|limit|<n>] [notify] [supply]",
+            "damage [<percent>|off]"
         },
         permission = "player.tps",
         permissionTargeted = "player.tps.others")
@@ -35,6 +36,7 @@ public final class TpsCommand implements CommandHandler {
             case "accessory" -> this.unlockAccessories(sender, targetPlayer);
             case "wear" -> this.wear(sender, targetPlayer, rest);
             case "ammo" -> this.ammo(sender, targetPlayer, rest);
+            case "damage" -> this.damage(sender, rest);
             case "refill" -> {
                 TpsWeaponSystem.refillAmmunition(targetPlayer);
                 CommandHandler.sendMessage(sender, "TPS ammunition refilled.");
@@ -154,6 +156,25 @@ public final class TpsCommand implements CommandHandler {
                         + (TpsWeaponSystem.ammoCurrent == TpsWeaponSystem.AmmoCurrent.FIXED
                                 ? "(" + TpsWeaponSystem.ammoFixed + ")"
                                 : ""));
+    }
+
+    /** Each TPS weapon hit on a monster takes this percentage of its max HP; "off" keeps the client's damage. */
+    private void damage(Player sender, List<String> args) {
+        if (!args.isEmpty()) {
+            String arg = args.get(0).toLowerCase().replace("%", "");
+            try {
+                TpsWeaponSystem.percentDamage = arg.equals("off") ? 0f : Float.parseFloat(arg) / 100f;
+            } catch (NumberFormatException e) {
+                sendUsageMessage(sender);
+                return;
+            }
+        }
+        float percent = TpsWeaponSystem.percentDamage * 100f;
+        CommandHandler.sendMessage(
+                sender,
+                percent > 0
+                        ? "TPS weapon hits take " + percent + "% of a monster's max HP."
+                        : "TPS weapon hits deal the client's damage.");
     }
 
     private static Integer parseWeaponId(Player sender, String arg) {
