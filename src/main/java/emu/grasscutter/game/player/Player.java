@@ -485,6 +485,8 @@ public class Player implements PlayerHook, FieldFetch {
 
         var event = new PlayerEnterAreaEvent(this);
         event.call();
+
+        SnezhnayaFrigid.onAreaChange(this);
     }
 
     public void setNickname(String nickName) {

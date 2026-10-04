@@ -9,6 +9,7 @@ import emu.grasscutter.data.excels.dungeon.DungeonData;
 import emu.grasscutter.game.entity.EntityTeam;
 import emu.grasscutter.game.entity.EntityWorld;
 import emu.grasscutter.game.player.Player;
+import emu.grasscutter.game.player.SnezhnayaFrigid;
 import emu.grasscutter.game.player.Player.SceneLoadState;
 import emu.grasscutter.game.props.EnterReason;
 import emu.grasscutter.game.props.EntityIdType;
@@ -485,6 +486,7 @@ public class World implements Iterable<Player> {
         if (newScene != null) {
             newScene.addPlayer(player);
 
+            SnezhnayaFrigid.onSceneChange(player, newScene.getId());
             player.getTeamManager().applyAbilities(newScene);
 
             // Dungeon

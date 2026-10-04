@@ -19,6 +19,15 @@ public final class TeamAbilityToggle {
     }
 
     public static void set(Player player, Collection<String> abilities, boolean enable) {
+        set(player, abilities, enable, true);
+    }
+
+    /**
+     * As {@link #set(Player, Collection, boolean)}, but {@code notify} false skips resending the
+     * block: for a scene change, whose own control block already goes out after the switch.
+     */
+    public static void set(
+            Player player, Collection<String> abilities, boolean enable, boolean notify) {
         var teamManager = player.getTeamManager();
         var embryos = teamManager.getTeamAbilityEmbryos();
         var team = teamManager.getEntity();
@@ -48,7 +57,7 @@ public final class TeamAbilityToggle {
             }
         }
 
-        if (team != null) {
+        if (notify && team != null) {
             player.sendPacket(new PacketAbilityChangeNotify(team.getId(), teamManager.getAbilityControlBlock()));
         }
     }
