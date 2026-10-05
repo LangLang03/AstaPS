@@ -119,3 +119,9 @@ _compile_errors.txt
 .gitignore
 _errs_detail.txt
 _errors_filtered.txt
+
+# History video generator outputs
+tools/history-video/data.js
+tools/history-video/fonts/
+tools/history-video/snap_*.png
+tools/history-video/*.mp4

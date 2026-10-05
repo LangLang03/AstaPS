@@ -1,0 +1,831 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>AstaPS Ink History</title>
+<style>
+@font-face{font-family:Brush;src:url(fonts/brush.ttf)}
+@font-face{font-family:Serif;src:url(fonts/serif.ttf);font-weight:700}
+@font-face{font-family:SerifI;src:url(fonts/serif-italic.ttf)}
+@font-face{font-family:Mono;src:url(fonts/mono.ttf)}
+html,body{margin:0;background:#111}
+canvas{display:block}
+</style></head><body>
+<canvas id="c" width="1920" height="1080"></canvas>
+<script src="data.js"></script>
+<script>
+'use strict';
+const W = 1920, H = 1080, FPS = 30;
+const INTRO = 3.2, MAIN = 66, OUTRO = 8.5;
+const TOTAL = INTRO + MAIN + OUTRO;
+const NFRAMES = Math.round(TOTAL * FPS);
+const TZ = 8 * 3600;
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+
+// ---------- deterministic helpers ----------
+function hashStr(s) { let h = 2166136261 >>> 0; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+function mulberry(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+function h1(n) { n = Math.imul(n ^ 0x9e3779b9, 0x85ebca6b); n ^= n >>> 13; n = Math.imul(n, 0xc2b2ae35); n ^= n >>> 16; return (n >>> 0) / 4294967296; }
+function noise1(x, seed) { const i = Math.floor(x), f = x - i, u = f * f * (3 - 2 * f); return h1(i * 7919 + seed) * (1 - u) + h1((i + 1) * 7919 + seed) * u; }
+const clamp = (x, a, b) => x < a ? a : x > b ? b : x;
+const lerp = (a, b, t) => a + (b - a) * t;
+const ease = t => t < 0 ? 0 : t > 1 ? 1 : t * t * (3 - 2 * t);
+const easeOut = t => { t = clamp(t, 0, 1); return 1 - Math.pow(1 - t, 3); };
+const easeOutBack = t => { t = clamp(t, 0, 1); const c = 1.9; return 1 + (c + 1) * Math.pow(t - 1, 3) + c * Math.pow(t - 1, 2); };
+function rgba(hex, a) { const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16},${n >> 8 & 255},${n & 255},${a})`; }
+const fmt = n => Math.round(n).toLocaleString('en-US');
+
+// ---------- palette ----------
+const PAPER = '#efe6d2', INK = '#1c1915', SEAL = '#b8322a';
+const AUTHOR_INK = { 'Asta': '#2f4f8f', 'Claude': '#c4622d', 'Rino': '#2e7d5b', 'kymuco': '#7a3e8e', '怀安': '#b02a4a', 'qweczh11': '#8a6d1f', 'MeChen618': '#1f6f8b' };
+const TYPES = [
+  { k: 'java', label: 'Java', c: '#c23a4c', ex: ['java'] },
+  { k: 'proto', label: 'Proto', c: '#3a5a9a', ex: ['proto'] },
+  { k: 'data', label: 'JSON / 配置', c: '#c18a2a', ex: ['json', 'yml', 'yaml', 'toml', 'properties', 'xml', 'tsv', 'csv'] },
+  { k: 'lua', label: 'Lua', c: '#3f8f6a', ex: ['lua', 'luac'] },
+  { k: 'web', label: 'Web / TS', c: '#7d4f9e', ex: ['ts', 'tsx', 'js', 'jsx', 'scss', 'css', 'html'] },
+  { k: 'tool', label: 'Py / Rust', c: '#2a8a8a', ex: ['py', 'rs', 'c', 'cpp', 'h', 'go'] },
+  { k: 'build', label: '构建脚本', c: '#8a5a3a', ex: ['gradle', 'kts', 'cmd', 'bat', 'sh', 'jar', 'lock'] },
+  { k: 'doc', label: '文档', c: '#6b6560', ex: ['md', 'txt', ''] },
+  { k: 'misc', label: '其它', c: '#56677a', ex: [] },
+];
+const EXT2T = {}; TYPES.forEach((t, i) => t.ex.forEach(e => EXT2T[e] = i));
+function typeOf(p) { const b = p.split('/').pop(); const d = b.lastIndexOf('.'); const e = d > 0 ? b.slice(d + 1).toLowerCase() : ''; return EXT2T[e] ?? 8; }
+
+// ---------- data ----------
+const D = window.DATA;
+const PATHS = D.paths;
+const COMMITS = D.commits.map((c, i) => ({ i, t: c[0], a: c[1], s: c[2], h: c[3], merge: !!c[4], f: c[5] }));
+const NC = COMMITS.length;
+const T0 = COMMITS[0].t, T1 = COMMITS[NC - 1].t;
+const dayOf = t => Math.floor((t + TZ) / 86400);
+const DAY0 = dayOf(T0), DAYN = dayOf(T1);
+function dateStr(t) { const d = new Date((t + TZ) * 1000); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`; }
+function timeStr(t) { const d = new Date((t + TZ) * 1000); return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`; }
+// playback time of each commit: blend of commit index and real time
+COMMITS.forEach(c => { const u = 0.55 * c.i / (NC - 1) + 0.45 * (c.t - T0) / (T1 - T0); c.p = INTRO + 0.4 + u * (MAIN - 2.2); });
+function realTimeAt(p) {
+  if (p <= COMMITS[0].p) return T0;
+  if (p >= COMMITS[NC - 1].p) return T1;
+  let lo = 0, hi = NC - 1; while (hi - lo > 1) { const m = (lo + hi) >> 1; if (COMMITS[m].p <= p) lo = m; else hi = m; }
+  const a = COMMITS[lo], b = COMMITS[hi]; return lerp(a.t, b.t, (p - a.p) / Math.max(1e-6, b.p - a.p));
+}
+
+// ---------- directory tree ----------
+function mkNode(name, parent) { return { name, parent, kids: new Map(), files: [], W: 0, depth: parent ? parent.depth + 1 : 0 }; }
+const ROOT = mkNode('AstaPS', null);
+const FILE_DIR = new Array(PATHS.length);
+PATHS.forEach((p, id) => {
+  const parts = p.split('/'); let n = ROOT;
+  for (let i = 0; i < parts.length - 1; i++) { let k = n.kids.get(parts[i]); if (!k) { k = mkNode(parts[i], n); n.kids.set(parts[i], k); } n = k; }
+  n.files.push(id); FILE_DIR[id] = n;
+});
+// compress single-child chains (keep root)
+(function compress(n) {
+  for (const [key, c0] of [...n.kids]) {
+    let c = c0;
+    while (c.files.length === 0 && c.kids.size === 1) { const g = [...c.kids.values()][0]; g.name = c.name + '/' + g.name; c = g; }
+    if (c !== c0) { n.kids.delete(key); n.kids.set(key, c); c.parent = n; }
+    compress(c);
+  }
+})(ROOT);
+const NODES = [];
+(function walk(n, d) { n.depth = d; n.id = NODES.length; NODES.push(n); for (const c of n.kids.values()) walk(c, d + 1); })(ROOT, 0);
+(function weigh(n) { n.W = n.files.length; for (const c of n.kids.values()) n.W += weigh(c); return n.W; })(ROOT);
+
+// ---------- file events & slots ----------
+// stagger file events inside a commit
+const FILE_EV = PATHS.map(() => []); // [time, kind(0 add,1 mod,2 del), commitIndex]
+let lines = 0;
+COMMITS.forEach(c => {
+  const n = c.f.length;
+  c.spread = n <= 1 ? 0 : Math.min(2.6, 0.25 + n * 0.00042);
+  c.added = 0; c.deleted = 0;
+  c.f.forEach((f, j) => { c.added += f[2]; c.deleted += f[3]; });
+  lines += c.added - c.deleted; c.lines = lines;
+});
+// process slot assignment in event order: deletes first, then adds
+const SLOT = new Array(PATHS.length).fill(-1);
+const SLOTS_OF = new Array(PATHS.length); // list of [time, slot] per (re)add
+NODES.forEach(n => { n.free = []; n.nextSlot = 0; n.maxSlot = 0; n.alive = 0; });
+COMMITS.forEach(c => {
+  const n = c.f.length;
+  const order = c.f.map((f, j) => j);
+  const tOf = j => c.p + (n <= 1 ? 0 : c.spread * j / (n - 1));
+  for (const j of order) { const [id, k] = c.f[j]; if (k === 2 && SLOT[id] >= 0) { const d = FILE_DIR[id]; d.free.push(SLOT[id]); SLOT[id] = -1; FILE_EV[id].push([tOf(j), 2, c.i]); } }
+  for (const j of order) {
+    const [id, k] = c.f[j]; if (k === 2) continue; const d = FILE_DIR[id];
+    if (SLOT[id] < 0) {
+      d.free.sort((a, b) => b - a);
+      const s = d.free.length ? d.free.pop() : d.nextSlot++;
+      d.maxSlot = Math.max(d.maxSlot, d.nextSlot);
+      SLOT[id] = s; (SLOTS_OF[id] ||= []).push([tOf(j), s]);
+      FILE_EV[id].push([tOf(j), 0, c.i]);
+    } else FILE_EV[id].push([tOf(j), 1, c.i]);
+  }
+});
+const FILE_TYPE = PATHS.map(typeOf);
+
+// ---------- layout (polar fan around crown centre) ----------
+const SLOT_C = 4.6;
+const diskR = n => n.maxSlot ? SLOT_C * Math.sqrt(n.maxSlot) + 8 : 0;
+const CROWN = { x: 0, y: -300 };
+ROOT.r = 0; ROOT.ang = -Math.PI / 2;
+function layout(n, a0, a1) {
+  const kids = [...n.kids.values()].sort((a, b) => b.W - a.W || a.name.localeCompare(b.name));
+  const arr = []; kids.forEach((k, i) => { if (i % 2) arr.push(k); else arr.unshift(k); });
+  const wt = k => Math.sqrt(k.W) + 1.5;
+  const tot = arr.reduce((s, k) => s + wt(k), 0);
+  let a = a0;
+  for (const k of arr) {
+    const span = (a1 - a0) * wt(k) / tot;
+    k.a0 = a; k.a1 = a + span; k.ang = a + span / 2;
+    k.r = (n === ROOT ? 60 : n.r) + diskR(n) * 0.6 + 80 + diskR(k);
+    a += span;
+    layout(k, k.a0, k.a1);
+  }
+}
+layout(ROOT, -Math.PI + 0.1, -0.1);
+NODES.forEach(n => {
+  if (n === ROOT) { n.x = CROWN.x; n.y = CROWN.y; return; }
+  n.x = CROWN.x + Math.cos(n.ang) * n.r;
+  n.y = CROWN.y + Math.sin(n.ang) * n.r;
+});
+// relax: circle collisions + springs to parent, keep the fan above ground
+(function relax() {
+  const N = NODES.length;
+  const cr = NODES.map(n => Math.max(diskR(n), 16) + 10);
+  const mass = NODES.map(n => 1 + Math.sqrt(n.W));
+  for (let it = 0; it < 900; it++) {
+    const temp = 1 - it / 900;
+    for (let i = 1; i < N; i++) for (let j = i + 1; j < N; j++) {
+      const a = NODES[i], b = NODES[j];
+      let dx = b.x - a.x, dy = b.y - a.y; let d = Math.hypot(dx, dy);
+      const m = cr[i] + cr[j]; if (d >= m) continue;
+      if (d < 1e-3) { dx = h1(i * 31 + j) - 0.5; dy = h1(i * 17 + j) - 0.5; d = Math.hypot(dx, dy); }
+      const push = (m - d) * 0.5, ux = dx / d, uy = dy / d;
+      const wa = mass[j] / (mass[i] + mass[j]), wb = 1 - wa;
+      a.x -= ux * push * wa; a.y -= uy * push * wa; b.x += ux * push * wb; b.y += uy * push * wb;
+    }
+    for (let i = 1; i < N; i++) {
+      const n = NODES[i], p = n.parent;
+      const rest = (p === ROOT ? 90 : diskR(p) * 0.7 + 70) + diskR(n);
+      const dx = n.x - p.x, dy = n.y - p.y, d = Math.hypot(dx, dy) || 1;
+      const k = 0.08 * (d > rest ? 1 : 0.4);
+      const f = (d - rest) * k;
+      if (p !== ROOT) { const wp = mass[i] / (mass[i] + mass[p.id]); n.x -= dx / d * f * (1 - wp); n.y -= dy / d * f * (1 - wp); p.x += dx / d * f * wp; p.y += dy / d * f * wp; }
+      else { n.x -= dx / d * f; n.y -= dy / d * f; }
+      // keep fan direction: nudge toward the seeded angle around crown
+      const ta = n.ang, ca = Math.atan2(n.y - CROWN.y, n.x - CROWN.x), cd = Math.hypot(n.x - CROWN.x, n.y - CROWN.y);
+      let da = ta - ca; while (da > Math.PI) da -= 2 * Math.PI; while (da < -Math.PI) da += 2 * Math.PI;
+      const na = ca + da * 0.02 * temp;
+      n.x = CROWN.x + Math.cos(na) * cd; n.y = CROWN.y + Math.sin(na) * cd;
+      // ground
+      const lim = -60 - diskR(n); if (n.y > lim) n.y = lim;
+    }
+  }
+})();
+// slot positions (phyllotaxis flower head)
+const GOLD = Math.PI * (3 - Math.sqrt(5));
+function slotPos(n, s) {
+  const r = SLOT_C * Math.sqrt(s + 0.6), th = s * GOLD + n.id;
+  return [n.x + Math.cos(th) * r, n.y + Math.sin(th) * r];
+}
+// branch geometry: cubic from parent to node
+NODES.forEach(n => {
+  if (!n.parent) return;
+  const p = n.parent, s = hashStr(n.name + n.id);
+  const dx = n.x - p.x, dy = n.y - p.y, L = Math.hypot(dx, dy);
+  const pd = p.parent ? [p.x - p.parent.x, p.y - p.parent.y] : [dx * 0.3, -Math.abs(L)];
+  const pl = Math.hypot(pd[0], pd[1]) || 1;
+  const bend = (h1(s) - 0.5) * 0.5;
+  n.c1 = [p.x + pd[0] / pl * L * 0.25, p.y + pd[1] / pl * L * 0.25];
+  n.c2 = [n.x - dx * 0.35 - dy * bend, n.y - dy * 0.35 + dx * bend];
+  n.len = L; n.seed = s;
+});
+function bez(n, t) {
+  const p = n.parent, u = 1 - t;
+  return [u * u * u * p.x + 3 * u * u * t * n.c1[0] + 3 * u * t * t * n.c2[0] + t * t * t * n.x,
+  u * u * u * p.y + 3 * u * u * t * n.c1[1] + 3 * u * t * t * n.c2[1] + t * t * t * n.y];
+}
+
+// subtree birth & alive counts over commits
+NODES.forEach(n => { n.birth = Infinity; n.aliveAt = []; });
+PATHS.forEach((p, id) => { const ev = FILE_EV[id]; if (!ev.length) return; let d = FILE_DIR[id]; while (d) { if (ev[0][0] < d.birth) d.birth = ev[0][0]; d = d.parent; } });
+NODES.forEach(n => { if (n.parent && n.birth < n.parent.birth) n.parent.birth = n.birth; });
+// alive per subtree after each commit (for widths), computed incrementally
+{
+  const alive = new Int32Array(NODES.length);
+  const live = new Uint8Array(PATHS.length);
+  COMMITS.forEach(c => {
+    for (const [id, k] of c.f) {
+      const want = k === 2 ? 0 : 1; if (live[id] === want) continue; live[id] = want;
+      let d = FILE_DIR[id]; while (d) { alive[d.id] += want ? 1 : -1; d = d.parent; }
+    }
+    c.alive = Int32Array.from(alive);
+  });
+}
+function commitIdxAt(p) { let lo = -1, hi = NC; while (hi - lo > 1) { const m = (lo + hi) >> 1; if (COMMITS[m].p <= p) lo = m; else hi = m; } return lo; }
+function subtreeAlive(n, p) {
+  const ci = commitIdxAt(p); if (ci < 0) return 0;
+  const c = COMMITS[ci]; const a = c.alive[n.id];
+  // ease from previous value through the commit's spread
+  if (ci > 0) { const prev = COMMITS[ci - 1].alive[n.id]; const u = ease((p - c.p) / (c.spread + 0.6)); return lerp(prev, a, u); }
+  return a * ease((p - c.p) / (c.spread + 0.6));
+}
+
+// ---------- camera track (precomputed, smoothed) ----------
+function worldBoundsAt(ci) {
+  let x0 = -200, x1 = 200, y0 = -520, y1 = 40;
+  if (ci >= 0) {
+    const c = COMMITS[ci];
+    for (const n of NODES) { const a = c.alive[n.id]; if (a <= 0) continue; const dr = n.maxSlot ? SLOT_C * Math.sqrt(Math.max(1, n.files.length ? Math.min(n.maxSlot, a) : 1)) + 20 : 20; x0 = Math.min(x0, n.x - dr); x1 = Math.max(x1, n.x + dr); y0 = Math.min(y0, n.y - dr); y1 = Math.max(y1, n.y + dr); }
+  }
+  return [x0, y0, x1, y1];
+}
+const VIEW = { x0: 500, y0: 60, x1: 1490, y1: 915 };
+const CAM = [];
+{
+  let cx = 0, cy = -250, sc = 1.3, vx = 0, vy = 0, vs = 0;
+  const pre = COMMITS.map((c, i) => worldBoundsAt(i));
+  let maxB = [-200, -520, 200, 40];
+  for (let f = 0; f < NFRAMES; f++) {
+    const p = f / FPS;
+    const ci = commitIdxAt(p + 1.2); // look ahead so camera makes room
+    let b = ci >= 0 ? pre[ci] : [-220, -520, 220, 40];
+    // never zoom back in hard: blend with the max bounds seen so far
+    maxB = [Math.min(maxB[0], b[0]), Math.min(maxB[1], b[1]), Math.max(maxB[2], b[2]), Math.max(maxB[3], b[3])];
+    b = [lerp(b[0], maxB[0], 0.6), lerp(b[1], maxB[1], 0.6), lerp(b[2], maxB[2], 0.6), lerp(b[3], maxB[3], 0.6)];
+    b[3] = Math.max(b[3], 40);
+    const bw = b[2] - b[0], bh = b[3] - b[1];
+    const ts = Math.min((VIEW.x1 - VIEW.x0) / bw, (VIEW.y1 - VIEW.y0) / bh, 1.6);
+    const tx = (b[0] + b[2]) / 2, ty = (b[1] + b[3]) / 2;
+    const k = 0.045;
+    sc += (ts - sc) * k; cx += (tx - cx) * k; cy += (ty - cy) * k;
+    CAM.push({ sc, cx, cy });
+  }
+}
+
+// ---------- author tracks ----------
+const AUTHORS = [...new Set(COMMITS.map(c => c.a))];
+const AUTH_COMMITS = {}; AUTHORS.forEach(a => AUTH_COMMITS[a] = []);
+COMMITS.forEach(c => {
+  let sx = 0, sy = 0, k = 0;
+  for (const [id, kind] of c.f) { const sl = (SLOTS_OF[id] || []); const s = sl.length ? sl[sl.length - 1][1] : 0; const pos = slotPos(FILE_DIR[id], s); sx += pos[0]; sy += pos[1]; k++; }
+  c.cx = k ? sx / k : null; c.cy = k ? sy / k : null;
+  AUTH_COMMITS[c.a].push(c);
+});
+const AUTH_TRACK = {};
+AUTHORS.forEach((a, ai) => {
+  const tr = []; const hs = hashStr(a);
+  let x = (h1(hs) - 0.5) * 300, y = -200, have = false;
+  const list = AUTH_COMMITS[a]; let li = 0, tx = x, ty = y;
+  for (let f = 0; f < NFRAMES; f++) {
+    const p = f / FPS;
+    while (li < list.length && list[li].p <= p + 0.25) { const c = list[li]; if (c.cx != null) { tx = c.cx; ty = c.cy; if (!have) { x = tx; y = ty - 200; have = true; } } li++; }
+    const wob = 70;
+    const ox = Math.cos(p * 0.7 + ai * 1.7) * wob, oy = Math.sin(p * 0.9 + ai * 2.3) * wob * 0.6 - 120;
+    x += (tx + ox - x) * 0.06; y += (ty + oy - y) * 0.06;
+    tr.push([x, y]);
+  }
+  AUTH_TRACK[a] = tr;
+});
+
+// ---------- prerendered layers ----------
+function makeCanvas(w, h) { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
+const PAPER_LAYER = makeCanvas(W, H);
+(function () {
+  const g = PAPER_LAYER.getContext('2d'); const R = mulberry(7);
+  g.fillStyle = PAPER; g.fillRect(0, 0, W, H);
+  // blotchy tone
+  for (let i = 0; i < 90; i++) { const x = R() * W, y = R() * H, r = 80 + R() * 260; const gr = g.createRadialGradient(x, y, 0, x, y, r); const dark = R() < 0.5; gr.addColorStop(0, dark ? 'rgba(150,120,80,0.045)' : 'rgba(255,250,235,0.06)'); gr.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = gr; g.fillRect(x - r, y - r, 2 * r, 2 * r); }
+  // fibres
+  for (let i = 0; i < 2600; i++) { const x = R() * W, y = R() * H, a = R() * Math.PI, l = 4 + R() * 22; g.strokeStyle = `rgba(110,85,55,${0.03 + R() * 0.06})`; g.lineWidth = 0.4 + R() * 0.7; g.beginPath(); g.moveTo(x, y); g.quadraticCurveTo(x + Math.cos(a) * l * 0.5 + (R() - 0.5) * 4, y + Math.sin(a) * l * 0.5 + (R() - 0.5) * 4, x + Math.cos(a) * l, y + Math.sin(a) * l); g.stroke(); }
+  // speckles
+  for (let i = 0; i < 5000; i++) { g.fillStyle = `rgba(80,60,40,${R() * 0.08})`; g.fillRect(R() * W, R() * H, 1 + R(), 1 + R()); }
+  // distant mountains (faint wash)
+  for (let layer = 0; layer < 3; layer++) {
+    const base = 760 + layer * 70, amp = 170 - layer * 40, seed = 100 + layer * 31;
+    g.beginPath(); g.moveTo(0, H);
+    for (let x = 0; x <= W; x += 6) { const y = base - amp * (0.55 * noise1(x / 420, seed) + 0.3 * noise1(x / 160, seed + 5) + 0.15 * noise1(x / 50, seed + 9)); g.lineTo(x, y); }
+    g.lineTo(W, H); g.closePath();
+    const gr = g.createLinearGradient(0, base - amp, 0, base + 220);
+    const al = [0.07, 0.085, 0.10][layer];
+    gr.addColorStop(0, `rgba(70,85,100,${al})`); gr.addColorStop(0.5, `rgba(70,85,100,${al * 0.45})`); gr.addColorStop(1, 'rgba(70,85,100,0)');
+    g.fillStyle = gr; g.fill();
+  }
+  // vignette
+  const vg = g.createRadialGradient(W / 2, H / 2, H * 0.45, W / 2, H / 2, H * 1.05);
+  vg.addColorStop(0, 'rgba(60,40,20,0)'); vg.addColorStop(1, 'rgba(60,40,20,0.30)');
+  g.fillStyle = vg; g.fillRect(0, 0, W, H);
+})();
+// watercolor blossom sprites per type (4 variants)
+const SPR = 48;
+const SPRITES = TYPES.map((t, ti) => [0, 1, 2, 3].map(v => {
+  const c = makeCanvas(SPR, SPR), g = c.getContext('2d'); const R = mulberry(ti * 10 + v + 1);
+  const cx = SPR / 2, cy = SPR / 2, r = SPR * 0.36;
+  const petals = 5, pts = [];
+  for (let i = 0; i <= 64; i++) { const a = i / 64 * Math.PI * 2; const pr = r * (0.78 + 0.22 * Math.pow(Math.abs(Math.cos(a * petals / 2 + v)), 0.6)) * (0.92 + R() * 0.1); pts.push([cx + Math.cos(a) * pr, cy + Math.sin(a) * pr]); }
+  g.beginPath(); pts.forEach((p, i) => i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1])); g.closePath();
+  const gr = g.createRadialGradient(cx, cy, 0, cx, cy, r);
+  gr.addColorStop(0, rgba(t.c, 0.55)); gr.addColorStop(0.7, rgba(t.c, 0.72)); gr.addColorStop(1, rgba(t.c, 0.95));
+  g.fillStyle = gr; g.fill();
+  g.lineWidth = 1.6; g.strokeStyle = rgba(t.c, 0.9); g.stroke();
+  // stamen dot
+  g.fillStyle = 'rgba(40,25,15,0.55)'; g.beginPath(); g.arc(cx + (R() - 0.5) * 2, cy + (R() - 0.5) * 2, r * 0.16, 0, 7); g.fill();
+  return c;
+}));
+// generic soft ink dot sprite
+const DOT = makeCanvas(32, 32); { const g = DOT.getContext('2d'); const gr = g.createRadialGradient(16, 16, 0, 16, 16, 15); gr.addColorStop(0, 'rgba(28,25,21,0.9)'); gr.addColorStop(0.6, 'rgba(28,25,21,0.5)'); gr.addColorStop(1, 'rgba(28,25,21,0)'); g.fillStyle = gr; g.fillRect(0, 0, 32, 32); }
+
+// ---------- brush primitives ----------
+// pts: [[x,y]...], hw: half-widths per point (screen px)
+function brushStroke(g, pts, hw, color, alpha, seed, opts = {}) {
+  const n = pts.length; if (n < 2) return;
+  const rough = opts.rough ?? 0.18, bristles = opts.bristles ?? 5, dry = opts.dry ?? 0.35;
+  const L = [], Rr = [], N = [];
+  for (let i = 0; i < n; i++) {
+    const a = pts[Math.max(0, i - 1)], b = pts[Math.min(n - 1, i + 1)];
+    let tx = b[0] - a[0], ty = b[1] - a[1]; const l = Math.hypot(tx, ty) || 1; tx /= l; ty /= l;
+    const nx = -ty, ny = tx; N.push([nx, ny]);
+    const w = hw[i] * (1 + rough * (noise1(i * 0.7, seed) - 0.5) * 2);
+    const sk = (noise1(i * 0.31, seed + 77) - 0.5) * hw[i] * 0.35; // skew for organic edge
+    L.push([pts[i][0] + nx * (w + sk), pts[i][1] + ny * (w + sk)]);
+    Rr.push([pts[i][0] - nx * (w - sk), pts[i][1] - ny * (w - sk)]);
+  }
+  g.fillStyle = rgba(color, alpha);
+  g.beginPath(); g.moveTo(L[0][0], L[0][1]);
+  for (let i = 1; i < n; i++) g.lineTo(L[i][0], L[i][1]);
+  for (let i = n - 1; i >= 0; i--) g.lineTo(Rr[i][0], Rr[i][1]);
+  g.closePath(); g.fill();
+  // dry-brush bristles (飞白)
+  const maxw = Math.max(...hw);
+  if (maxw < 1.4 || bristles === 0) return;
+  for (let b = 0; b < bristles; b++) {
+    const off = (b + 0.5) / bristles * 2 - 1;
+    g.lineWidth = Math.max(0.5, maxw * 0.28 / Math.sqrt(bristles) * 1.6);
+    g.strokeStyle = rgba(opts.bristleColor || color, alpha * (0.35 + 0.4 * h1(seed + b)));
+    g.beginPath(); let pen = false;
+    for (let i = 0; i < n; i++) {
+      const tail = i / (n - 1);
+      const gap = noise1(i * 0.45 + b * 13.1, seed + b * 31) < dry * (0.4 + tail);
+      const x = pts[i][0] + N[i][0] * hw[i] * off * 0.85, y = pts[i][1] + N[i][1] * hw[i] * off * 0.85;
+      if (gap) { pen = false; continue; }
+      if (!pen) { g.moveTo(x, y); pen = true; } else g.lineTo(x, y);
+    }
+    g.stroke();
+  }
+  // paper showing through: light streaks
+  if (maxw > 3 && opts.streaks !== false) {
+    g.strokeStyle = rgba(PAPER, 0.35 * alpha);
+    for (let b = 0; b < 2; b++) {
+      const off = (h1(seed + 40 + b) - 0.5) * 1.3;
+      g.lineWidth = Math.max(0.6, maxw * 0.12);
+      g.beginPath(); let pen = false;
+      for (let i = 0; i < n; i++) {
+        const show = noise1(i * 0.3 + b * 7, seed + 90 + b) > 0.62;
+        const x = pts[i][0] + N[i][0] * hw[i] * off, y = pts[i][1] + N[i][1] * hw[i] * off;
+        if (!show) { pen = false; continue; }
+        if (!pen) { g.moveTo(x, y); pen = true; } else g.lineTo(x, y);
+      }
+      g.stroke();
+    }
+  }
+}
+// straight-ish horizontal brush stroke helper for UI
+function brushLine(g, x0, y0, x1, y1, w, color, alpha, seed, taper = true, opts = {}) {
+  const len = Math.hypot(x1 - x0, y1 - y0); const n = Math.max(3, Math.round(len / 5));
+  const pts = [], hw = [];
+  for (let i = 0; i < n; i++) {
+    const t = i / (n - 1);
+    const wob = (noise1(t * 4, seed) - 0.5) * w * 0.5;
+    const nx = -(y1 - y0) / (len || 1), ny = (x1 - x0) / (len || 1);
+    pts.push([lerp(x0, x1, t) + nx * wob, lerp(y0, y1, t) + ny * wob]);
+    let f = 1; if (taper) f = Math.min(1, t * 8 + 0.35) * (1 - 0.55 * Math.pow(t, 3));
+    hw.push(w / 2 * f);
+  }
+  brushStroke(g, pts, hw, color, alpha, seed, opts);
+}
+
+// ---------- world → screen ----------
+let cam;
+const toS = (x, y) => [(x - cam.cx) * cam.sc + (VIEW.x0 + VIEW.x1) / 2, (y - cam.cy) * cam.sc + (VIEW.y0 + VIEW.y1) / 2];
+
+// ---------- scene drawing ----------
+function branchHalfWidth(alive) { return 0.7 + 1.25 * Math.pow(Math.max(0, alive), 0.36); }
+
+function drawGround(p) {
+  const [gx, gy] = toS(0, 0);
+  const a = ease((p - 0.6) / 1.2);
+  if (a <= 0) return;
+  const s = cam.sc;
+  // ground strokes and rocks
+  brushLine(ctx, gx - 520 * s * a, gy + 6 * s, gx + 560 * s * a, gy + 2 * s, Math.max(2, 9 * s), INK, 0.75, 11, true, { bristles: 6, dry: 0.5 });
+  brushLine(ctx, gx - 300 * s * a, gy + 26 * s, gx + 180 * s * a, gy + 30 * s, Math.max(1.5, 5 * s), INK, 0.45, 12, true, { bristles: 4, dry: 0.6 });
+  brushLine(ctx, gx + 220 * s * a, gy + 22 * s, gx + 420 * s * a, gy + 18 * s, Math.max(1.5, 4 * s), INK, 0.4, 13, true, { bristles: 4, dry: 0.6 });
+  // grass clumps
+  for (let i = 0; i < 7; i++) {
+    const x = (h1(i + 500) - 0.5) * 860; if (a < h1(i + 800)) continue;
+    for (let b = 0; b < 3; b++) {
+      const h = 10 + h1(i * 3 + b + 600) * 18, lean = (b - 1) * 8 + (h1(i * 5 + b) - 0.5) * 6;
+      const [sx, sy] = toS(x + b * 3, 4); const [ex, ey] = toS(x + b * 3 + lean, 4 - h);
+      brushLine(ctx, sx, sy, ex, ey, Math.max(1, 2.4 * s), INK, 0.5, 900 + i * 3 + b, true, { bristles: 0 });
+    }
+  }
+}
+
+function drawTrunk(p) {
+  const g = ease((p - ROOT.birth + 0.2) / 1.2); if (g <= 0) return;
+  const al = subtreeAlive(ROOT, p);
+  const top = branchHalfWidth(al) * cam.sc, base = top * 1.9 + 3 * cam.sc;
+  const pts = [], hw = []; const n = 40;
+  for (let i = 0; i < n; i++) {
+    const t = i / (n - 1) * g;
+    const x = Math.sin(t * 3.1) * 26 - t * 10, y = -t * 300;
+    pts.push(toS(x, y)); hw.push(lerp(base, top, t));
+  }
+  brushStroke(ctx, pts, hw, INK, 0.9, 4242, { bristles: 7, dry: 0.3 });
+  // bark texture flicks
+  for (let i = 0; i < 9; i++) {
+    const t = 0.1 + 0.8 * h1(i + 10); if (t > g) continue;
+    const x = Math.sin(t * 3.1) * 26 - t * 10, y = -t * 300;
+    const [sx, sy] = toS(x + (h1(i + 20) - 0.5) * 18, y);
+    brushLine(ctx, sx - 6 * cam.sc, sy, sx + 8 * cam.sc, sy - 10 * cam.sc, Math.max(1, 3 * cam.sc), '#3a332b', 0.5, 300 + i, true, { bristles: 0 });
+  }
+}
+
+function drawBranches(p) {
+  for (const n of NODES) {
+    if (!n.parent) continue;
+    const g = easeOut((p - n.birth + 0.15) / 0.9); if (g <= 0) continue;
+    const al = subtreeAlive(n, p), alp = subtreeAlive(n.parent, p);
+    const dead = al < 0.5 && p > n.birth + 1;
+    const w1 = branchHalfWidth(Math.max(al, dead ? 0 : 1)) * cam.sc, w0 = Math.max(w1, Math.min(branchHalfWidth(Math.max(alp, 1)) * cam.sc * 0.75, w1 * 1.5));
+    const seg = clamp(Math.round(n.len * cam.sc / 7), 6, 60);
+    const pts = [], hw = [];
+    for (let i = 0; i <= seg; i++) { const t = i / seg * g; pts.push(toS(...bez(n, t))); hw.push(lerp(w0, w1, Math.pow(t, 0.7)) * (dead ? 0.45 : 1)); }
+    brushStroke(ctx, pts, hw, dead ? '#5a534b' : INK, dead ? 0.35 : 0.86, n.seed, { bristles: hw[0] > 3 ? 5 : 2, dry: 0.32 });
+    // a little side twig for organic feel
+    if (n.len * cam.sc > 70 && g > 0.6 && h1(n.seed + 5) > 0.45) {
+      const t = 0.35 + 0.3 * h1(n.seed + 6); const [bx, by] = bez(n, t);
+      const ang = Math.atan2(n.y - n.parent.y, n.x - n.parent.x) + (h1(n.seed + 7) > 0.5 ? 1 : -1) * (0.5 + 0.4 * h1(n.seed + 8));
+      const tl = n.len * (0.12 + 0.12 * h1(n.seed + 9)) * ease((g - 0.6) / 0.4);
+      const a0 = toS(bx, by), a1 = toS(bx + Math.cos(ang) * tl, by + Math.sin(ang) * tl);
+      brushLine(ctx, a0[0], a0[1], a1[0], a1[1], Math.max(1, w1 * 1.1), dead ? '#5a534b' : INK, dead ? 0.3 : 0.8, n.seed + 11, true, { bristles: 0 });
+    }
+  }
+}
+
+// file state at time p → drawn as blossoms
+const FALLING = []; // collected per frame
+function drawFiles(p, flashes) {
+  const sc = cam.sc;
+  const base = Math.max(2.2, 9.4 * sc);
+  for (let id = 0; id < PATHS.length; id++) {
+    const ev = FILE_EV[id]; if (!ev.length || ev[0][0] > p) continue;
+    // find last event <= p
+    let k = 0; while (k + 1 < ev.length && ev[k + 1][0] <= p) k++;
+    const e = ev[k]; const dt = p - e[0];
+    const sl = SLOTS_OF[id]; let s = sl[0][1]; for (const q of sl) if (q[0] <= p) s = q[1];
+    const d = FILE_DIR[id];
+    const [wx, wy] = slotPos(d, s);
+    const v = (id * 7) & 3, spr = SPRITES[FILE_TYPE[id]][v];
+    if (e[1] === 2) { // deleted: falling petal
+      if (dt > 3.2) continue;
+      const fall = dt;
+      const sway = Math.sin(fall * 3 + id) * 22 * fall;
+      const fx = wx + sway + fall * 30 * (h1(id) - 0.3), fy = wy + 60 * fall * fall + 30 * fall;
+      const [sx, sy] = toS(fx, fy);
+      const a = 1 - clamp(fall / 3.2, 0, 1);
+      const sz = base * (1 - 0.3 * fall / 3.2);
+      ctx.globalAlpha = a * 0.85;
+      ctx.save(); ctx.translate(sx, sy); ctx.rotate(fall * 2.5 + id); ctx.scale(1, 0.55 + 0.45 * Math.abs(Math.cos(fall * 4 + id)));
+      ctx.drawImage(spr, -sz / 2, -sz / 2, sz, sz); ctx.restore();
+      continue;
+    }
+    // bloom on add (first or re-add)
+    let addT = Infinity; for (let j = k; j >= 0; j--) if (ev[j][1] === 0) { addT = p - ev[j][0]; break; }
+    let sz = base;
+    if (addT < 0.6) sz *= easeOutBack(addT / 0.6);
+    let flash = 0;
+    if (e[1] === 1 && dt < 0.9) { flash = 1 - dt / 0.9; sz *= 1 + 0.9 * flash * (1 - flash) * 4 * 0.5; }
+    if (e[1] === 0 && dt < 0.9) flash = 1 - dt / 0.9;
+    const [sx, sy] = toS(wx, wy);
+    if (sx < -20 || sx > W + 20 || sy < -20 || sy > H + 20) continue;
+    ctx.globalAlpha = 0.92;
+    ctx.drawImage(spr, sx - sz / 2, sy - sz / 2, sz, sz);
+    if (flash > 0 && flashes.length < 1800) flashes.push([sx, sy, flash, e[2], sz]);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawFlashes(flashes) {
+  ctx.globalCompositeOperation = 'source-over';
+  for (const [sx, sy, f, ci, sz] of flashes) {
+    const col = AUTHOR_INK[COMMITS[ci].a] || INK;
+    const r = sz * (0.6 + (1 - f) * 1.6);
+    ctx.strokeStyle = rgba(col, 0.55 * f); ctx.lineWidth = Math.max(0.8, 1.8 * f);
+    ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI * 2); ctx.stroke();
+  }
+}
+
+// commit strokes from author brush to files
+function drawCommitStrokes(p) {
+  const ci = commitIdxAt(p);
+  for (let i = Math.max(0, ci - 12); i <= ci; i++) {
+    const c = COMMITS[i]; const dt = p - c.p; if (dt < 0 || dt > c.spread + 1.0 || !c.f.length) continue;
+    const col = AUTHOR_INK[c.a] || INK;
+    const fIdx = Math.min(AUTH_TRACK[c.a].length - 1, Math.round(p * FPS));
+    const [ax, ay] = toS(...AUTH_TRACK[c.a][fIdx]);
+    const n = c.f.length; const step = Math.max(1, Math.ceil(n / 40));
+    for (let j = 0; j < n; j += step) {
+      const ft = c.p + (n <= 1 ? 0 : c.spread * j / (n - 1));
+      const lt = p - ft; if (lt < 0 || lt > 0.95) continue;
+      const id = c.f[j][0]; const sl = SLOTS_OF[id]; let s = sl ? sl[0][1] : 0; if (sl) for (const q of sl) if (q[0] <= ft + 0.01) s = q[1];
+      const [bx, by] = toS(...slotPos(FILE_DIR[id], s));
+      const head = easeOut(lt / 0.35), tail = easeOut((lt - 0.3) / 0.65);
+      if (head - tail < 0.02) continue;
+      const mx = (ax + bx) / 2, my = (ay + by) / 2, dx = bx - ax, dy = by - ay;
+      const bend = (h1(id + i) - 0.5) * 0.6;
+      const cx = mx - dy * bend, cy = my + dx * bend;
+      const pts = [], hw = []; const m = 18;
+      for (let q = 0; q <= m; q++) {
+        const t = lerp(tail, head, q / m), u = 1 - t;
+        pts.push([u * u * ax + 2 * u * t * cx + t * t * bx, u * u * ay + 2 * u * t * cy + t * t * by]);
+        hw.push(0.3 + 1.5 * Math.sin(Math.PI * q / m));
+      }
+      brushStroke(ctx, pts, hw, col, 0.55 * (1 - tail), id + 17, { bristles: 0, rough: 0.3, streaks: false });
+    }
+  }
+}
+
+function drawAuthors(p) {
+  const fIdx = Math.min(NFRAMES - 1, Math.round(p * FPS));
+  for (const a of AUTHORS) {
+    const list = AUTH_COMMITS[a]; if (list[0].p > p + 0.25) continue;
+    // recency
+    let last = -Infinity; for (const c of list) { if (c.p <= p + 0.25) last = c.p; else break; }
+    const rec = p - last;
+    const act = clamp(1 - (rec - 2) / 4, 0.0, 1);
+    const appear = ease((p - list[0].p + 0.25) / 0.5);
+    const al = appear * (0.18 + 0.82 * act);
+    if (al < 0.02) continue;
+    const [x, y] = toS(...AUTH_TRACK[a][fIdx]);
+    const col = AUTHOR_INK[a] || INK;
+    // brush tip glyph: ink drop + name
+    const pulse = rec >= -0.25 && rec < 0.6 ? 1 - Math.abs(rec) / 0.6 : 0;
+    ctx.globalAlpha = al;
+    const r = 7 + 5 * pulse;
+    ctx.fillStyle = rgba(col, 0.25); ctx.beginPath(); ctx.arc(x, y, r * 2.2, 0, 7); ctx.fill();
+    ctx.fillStyle = rgba(col, 0.95);
+    ctx.beginPath(); ctx.moveTo(x, y - r * 1.8); ctx.bezierCurveTo(x + r, y - r * 0.4, x + r, y + r, x, y + r); ctx.bezierCurveTo(x - r, y + r, x - r, y - r * 0.4, x, y - r * 1.8); ctx.fill();
+    ctx.font = '30px Brush'; ctx.textBaseline = 'middle';
+    ctx.lineWidth = 6; ctx.strokeStyle = rgba(PAPER, 0.75); ctx.lineJoin = 'round';
+    ctx.strokeText(a, x + 16, y - 2); ctx.fillStyle = col; ctx.fillText(a, x + 16, y - 2);
+    ctx.globalAlpha = 1;
+  }
+}
+
+// ---------- HUD ----------
+function drawSeal(x, y, s, text, alpha, seed) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate((h1(seed) - 0.5) * 0.08); ctx.globalAlpha = alpha;
+  const R = mulberry(seed);
+  ctx.fillStyle = SEAL;
+  ctx.beginPath();
+  const pts = [[-s / 2, -s / 2], [s / 2, -s / 2], [s / 2, s / 2], [-s / 2, s / 2]];
+  for (let e = 0; e < 4; e++) { const a = pts[e], b = pts[(e + 1) % 4]; for (let i = 0; i < 10; i++) { const t = i / 10; ctx.lineTo(lerp(a[0], b[0], t) + (R() - 0.5) * s * 0.03, lerp(a[1], b[1], t) + (R() - 0.5) * s * 0.03); } }
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = PAPER; ctx.font = `${s * 0.4}px Brush`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(text[0], s * 0.2, -s * 0.2); ctx.fillText(text[1], s * 0.2, s * 0.22); ctx.fillText(text[2], -s * 0.2, -s * 0.2); ctx.fillText(text[3], -s * 0.2, s * 0.22);
+  // worn specks
+  ctx.globalCompositeOperation = 'destination-out';
+  for (let i = 0; i < 40; i++) { ctx.globalAlpha = alpha * R() * 0.6; ctx.beginPath(); ctx.arc((R() - 0.5) * s, (R() - 0.5) * s, R() * s * 0.025, 0, 7); ctx.fill(); }
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.restore(); ctx.textAlign = 'left';
+}
+
+function revealText(text, x, y, font, color, prog, alpha = 1) {
+  if (prog <= 0) return;
+  ctx.save(); ctx.font = font; const w = ctx.measureText(text).width;
+  ctx.beginPath(); ctx.rect(x - 10, y - 200, (w + 20) * prog, 400); ctx.clip();
+  ctx.globalAlpha = alpha; ctx.fillStyle = color; ctx.fillText(text, x, y); ctx.restore();
+}
+
+function drawHUD(p, f) {
+  const hudA = ease((p - 0.3) / 1.0);
+  const rt = realTimeAt(p);
+  const ci = commitIdxAt(p);
+  ctx.textBaseline = 'alphabetic';
+  // title
+  revealText('AstaPS', 64, 132, '108px Brush', INK, ease((p - 0.2) / 1.4), 0.92);
+  drawSeal(395, 88, 62, '源流年轮', ease((p - 1.4) / 0.3) * 0.92, 5);
+  revealText('一部代码的生长史  ·  git log 水墨长卷', 70, 178, '30px Brush', '#4a4038', ease((p - 0.9) / 1.2), 0.85);
+  // day counter
+  if (hudA > 0) {
+    const day = dayOf(rt) - DAY0;
+    ctx.globalAlpha = hudA;
+    ctx.fillStyle = INK; ctx.font = '74px Brush'; ctx.fillText(`第 ${day} 天`, 66, 270);
+    ctx.font = '700 30px Serif'; ctx.fillStyle = '#4a4038'; ctx.fillText(`${dateStr(rt)}  ${timeStr(rt)}`, 72, 312);
+    ctx.font = '22px SerifI'; ctx.fillStyle = '#6a5d50'; ctx.fillText(`Day ${day} of ${DAYN - DAY0}`, 72, 344);
+    ctx.globalAlpha = 1;
+  }
+  // stats (top right, vertical columns like a scroll)
+  const sx = 1540;
+  if (hudA > 0) {
+    ctx.globalAlpha = hudA;
+    const c = ci >= 0 ? COMMITS[ci] : null;
+    let filesAlive = 0; if (c) { filesAlive = subtreeAlive(ROOT, p); }
+    const prevLines = ci > 0 ? COMMITS[ci - 1].lines : 0; const ln = c ? lerp(prevLines, c.lines, ease((p - c.p) / (c.spread + 0.6))) : 0;
+    const authorsSoFar = new Set(COMMITS.slice(0, ci + 1).map(c => c.a)).size;
+    const stats = [['提交', `${ci + 1}`, `/ ${NC}`], ['文件', fmt(filesAlive), ''], ['行数', fmt(ln), ''], ['作者', `${authorsSoFar}`, '']];
+    stats.forEach(([k, v, sub], i) => {
+      const y = 92 + i * 66;
+      ctx.font = '30px Brush'; ctx.fillStyle = SEAL; ctx.fillText(k, sx, y);
+      ctx.font = '700 38px Serif'; ctx.fillStyle = INK; ctx.fillText(v, sx + 70, y + 2);
+      if (sub) { const w = ctx.measureText(v).width; ctx.font = '24px SerifI'; ctx.fillStyle = '#6a5d50'; ctx.fillText(sub, sx + 80 + w, y + 2); }
+      brushLine(ctx, sx, y + 16, sx + 320, y + 16, 2.2, INK, 0.3, 70 + i, true, { bristles: 0 });
+    });
+    ctx.globalAlpha = 1;
+  }
+  // contributors leaderboard
+  if (hudA > 0) {
+    const counts = {}; for (let i = 0; i <= ci; i++) { const a = COMMITS[i].a; counts[a] = (counts[a] || 0) + 1; }
+    // animate the newest commit's bar growth
+    const list = Object.entries(counts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    const max = Math.max(1, ...list.map(x => x[1]));
+    let y = 400;
+    ctx.globalAlpha = hudA;
+    ctx.font = '34px Brush'; ctx.fillStyle = INK; ctx.fillText('执笔者', sx, y); y += 18;
+    brushLine(ctx, sx, y, sx + 140, y, 4, SEAL, 0.8, 99, true, { bristles: 3 });
+    y += 42;
+    list.forEach(([a, n], i) => {
+      const col = AUTHOR_INK[a] || INK;
+      const cc = COMMITS[ci]; const justNow = cc && cc.a === a ? ease((p - cc.p) / 0.5) : 1;
+      const nn = cc && cc.a === a ? n - 1 + justNow : n;
+      ctx.font = '28px Brush'; ctx.fillStyle = col; ctx.fillText(a, sx, y);
+      ctx.font = '700 24px Serif'; ctx.fillStyle = INK; ctx.textAlign = 'right'; ctx.fillText(String(n), sx + 330, y); ctx.textAlign = 'left';
+      const bw = 300 * nn / max;
+      if (bw > 4) brushLine(ctx, sx, y + 14, sx + bw, y + 14, 9, col, 0.85, 200 + hashStr(a) % 1000, true, { bristles: 4, dry: 0.45 });
+      y += 58;
+    });
+    ctx.globalAlpha = 1;
+  }
+  // legend
+  if (hudA > 0) {
+    ctx.globalAlpha = hudA * 0.9;
+    let lx = 1545, ly = 856;
+    ctx.font = '24px Brush'; ctx.fillStyle = '#4a4038'; ctx.fillText('花色 · 文件类型', lx, ly - 8);
+    TYPES.slice(0, 8).forEach((t, i) => {
+      const x = lx + (i % 2) * 175, y = ly + 24 + Math.floor(i / 2) * 29;
+      ctx.drawImage(SPRITES[i][0], x - 4, y - 18, 26, 26);
+      ctx.font = '20px Brush'; ctx.fillStyle = '#3a332b'; ctx.fillText(t.label, x + 26, y + 2);
+    });
+    ctx.globalAlpha = 1;
+  }
+  drawTimeline(p, rt, ci, hudA);
+  drawLog(p, ci, hudA);
+}
+
+const TL = { x0: 90, x1: 1830, y: 1022 };
+function drawTimeline(p, rt, ci, hudA) {
+  if (hudA <= 0) return;
+  ctx.globalAlpha = hudA;
+  const X = t => lerp(TL.x0, TL.x1, (t - (DAY0 * 86400 - TZ)) / ((DAYN + 1) * 86400 - DAY0 * 86400));
+  // base stroke
+  brushLine(ctx, TL.x0 - 10, TL.y, TL.x1 + 10, TL.y, 3, INK, 0.35, 501, false, { bristles: 0 });
+  // day ticks
+  for (let d = DAY0; d <= DAYN + 1; d++) {
+    const x = X(d * 86400 - TZ);
+    ctx.strokeStyle = rgba(INK, 0.4); ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(x, TL.y - 6); ctx.lineTo(x, TL.y + 6); ctx.stroke();
+    if (d <= DAYN) {
+      const md = dateStr(d * 86400 - TZ).slice(5).replace('-', '/');
+      ctx.font = '17px Mono'; ctx.fillStyle = d - DAY0 === dayOf(rt) - DAY0 ? SEAL : 'rgba(60,50,40,0.6)';
+      ctx.textAlign = 'center'; ctx.fillText(md, x + (X(86400) - X(0)) / 2, TL.y + 34); ctx.textAlign = 'left';
+    }
+  }
+  // commit dots
+  for (let i = 0; i <= ci; i++) {
+    const c = COMMITS[i]; const x = X(c.t); const pop = ease((p - c.p) / 0.3);
+    const col = AUTHOR_INK[c.a] || INK;
+    const sz = c.merge ? 6 : 4 + Math.min(12, Math.log2(1 + c.f.length) * 1.2);
+    ctx.fillStyle = col; ctx.globalAlpha = hudA * 0.75 * pop;
+    ctx.beginPath(); ctx.arc(x, TL.y - 16 - (h1(i) * 9), sz * 0.45, 0, 7); ctx.fill();
+  }
+  ctx.globalAlpha = hudA;
+  // progress stroke
+  const xe = X(rt);
+  if (xe > TL.x0 + 3) brushLine(ctx, TL.x0, TL.y, xe, TL.y, 9, INK, 0.88, 502, false, { bristles: 5, dry: 0.3 });
+  // brush tip marker
+  ctx.fillStyle = SEAL; ctx.beginPath(); ctx.arc(xe, TL.y, 7, 0, 7); ctx.fill();
+  ctx.globalAlpha = 1;
+}
+
+function wrapLines(text, maxW, maxLines) {
+  const words = text.split(' '); const out = []; let cur = '';
+  for (const w of words) {
+    const t = cur ? cur + ' ' + w : w;
+    if (ctx.measureText(t).width <= maxW) cur = t;
+    else { if (cur) out.push(cur); cur = w; while (ctx.measureText(cur).width > maxW && cur.length > 3) cur = cur.slice(0, -1); }
+    if (out.length === maxLines) break;
+  }
+  if (out.length < maxLines && cur) out.push(cur);
+  if (out.length === maxLines && out.join(' ').length < text.length) { let l = out[maxLines - 1]; while (ctx.measureText(l + '…').width > maxW && l.length > 1) l = l.slice(0, -1); out[maxLines - 1] = l + '…'; }
+  return out;
+}
+function drawLog(p, ci, hudA) {
+  if (hudA <= 0) return;
+  const x = 70; let y = 418;
+  ctx.globalAlpha = hudA;
+  ctx.font = '32px Brush'; ctx.fillStyle = INK; ctx.fillText('落笔记录', x, y);
+  brushLine(ctx, x, y + 16, x + 150, y + 16, 4, SEAL, 0.8, 98, true, { bristles: 3 });
+  if (ci < 0) { ctx.globalAlpha = 1; return; }
+  const newest = COMMITS[ci]; const slide = 1 - easeOut((p - newest.p) / 0.45);
+  y = 470 - slide * 96;
+  ctx.save(); ctx.beginPath(); ctx.rect(0, 444, 520, 520); ctx.clip();
+  for (let k = 0; k < 6; k++) {
+    const i = ci - k; if (i < 0) break;
+    const c = COMMITS[i];
+    let a = hudA * (k === 0 ? ease((p - c.p) / 0.35) : 1) * Math.max(0, 1 - k * 0.2);
+    if (y > 930) a *= Math.max(0, 1 - (y - 930) / 40);
+    if (a <= 0.01) { y += 96; continue; }
+    ctx.globalAlpha = a;
+    ctx.font = '15px Mono'; ctx.fillStyle = '#8a7d70'; ctx.fillText(c.h, x, y);
+    ctx.font = '24px Brush'; ctx.fillStyle = AUTHOR_INK[c.a] || INK; ctx.fillText(c.a, x + 80, y + 1);
+    const aw = ctx.measureText(c.a).width;
+    ctx.font = '15px Mono'; ctx.fillStyle = '#8a7d70';
+    const meta = c.merge ? 'merge' : `${c.f.length} 文件  +${fmt(c.added)} −${fmt(c.deleted)}`;
+    ctx.font = '15px Mono'; ctx.fillText(meta, x + 92 + aw, y);
+    ctx.font = '700 20px Serif'; ctx.fillStyle = INK;
+    let ls = wrapLines(c.s, 380, 2);
+    if (k === 0) { const tot = ls.join('').length; let budget = Math.ceil(tot * ease((p - c.p) / 0.6)); ls = ls.map(l => { const r = l.slice(0, Math.max(0, budget)); budget -= l.length; return r; }); }
+    ls.forEach((l, j) => ctx.fillText(l, x, y + 28 + j * 24));
+    y += 96;
+  }
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
+
+// ---------- intro / outro overlays ----------
+function drawIntro(p) {
+  if (p > INTRO + 0.8) return;
+  const a = 1 - ease((p - INTRO + 0.4) / 1.2);
+  if (a <= 0) return;
+  ctx.globalAlpha = a;
+  ctx.textAlign = 'center';
+  revealText('', 0, 0, '10px Brush', INK, 0);
+  ctx.font = '40px Brush'; ctx.fillStyle = '#4a4038';
+  ctx.save(); ctx.beginPath(); ctx.rect(0, 0, W * ease((p - 0.3) / 1.5), H); ctx.clip();
+  ctx.fillText('从第 0 天，到今天', (VIEW.x0 + VIEW.x1) / 2, 560);
+  ctx.font = '26px SerifI'; ctx.fillStyle = '#6a5d50';
+  ctx.fillText(`${dateStr(T0)}  —  ${dateStr(T1)}  ·  ${NC} commits`, (VIEW.x0 + VIEW.x1) / 2, 606);
+  ctx.restore();
+  ctx.textAlign = 'left'; ctx.globalAlpha = 1;
+}
+
+function drawOutro(p) {
+  const t0 = INTRO + MAIN; const u = (p - t0); if (u < 0) return;
+  const a = ease(u / 1.6);
+  // wash
+  ctx.fillStyle = rgba(PAPER, 0.72 * a); ctx.fillRect(0, 0, W, H);
+  ctx.globalAlpha = a; ctx.textAlign = 'center';
+  const cx = W / 2 - 40;
+  revealText('', 0, 0, '10px Brush', INK, 0);
+  ctx.save(); ctx.beginPath(); ctx.rect(0, 0, cx - 400 + 900 * ease(u / 1.8), H); ctx.clip();
+  ctx.font = '120px Brush'; ctx.fillStyle = INK; ctx.fillText('十七日 · 一树繁花', cx, 440);
+  ctx.restore();
+  const b = ease((u - 1.4) / 1.2); ctx.globalAlpha = b;
+  const last = COMMITS[NC - 1];
+  ctx.font = '46px Brush'; ctx.fillStyle = '#3a332b';
+  ctx.fillText(`${NC} 次提交  ·  ${AUTHORS.length} 位执笔者  ·  ${fmt(last.alive[ROOT.id])} 个文件  ·  ${fmt(last.lines)} 行`, cx, 530);
+  ctx.font = '30px SerifI'; ctx.fillStyle = '#6a5d50';
+  ctx.fillText(`Day 0 (${dateStr(T0)})  →  Day ${DAYN - DAY0} (${dateStr(T1)})`, cx, 585);
+  const c = ease((u - 2.6) / 1.0); ctx.globalAlpha = c;
+  ctx.font = '26px Brush'; ctx.fillStyle = '#4a4038';
+  ctx.fillText('每一帧皆由 JavaScript 逐笔绘制于 Canvas', cx, 660);
+  ctx.textAlign = 'left'; ctx.globalAlpha = 1;
+  // seal slam
+  const sv = (u - 3.2); if (sv > 0) { const s = 1 + 0.5 * (1 - easeOut(sv / 0.25)); drawSeal(cx + 540, 392, 96 * s, '源流年轮', ease(sv / 0.15) * 0.95, 9); }
+}
+
+// ---------- main render ----------
+function renderFrame(f) {
+  const p = f / FPS;
+  cam = CAM[Math.min(f, CAM.length - 1)];
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+  ctx.drawImage(PAPER_LAYER, 0, 0);
+  ctx.globalCompositeOperation = 'multiply';
+  drawGround(p);
+  drawTrunk(p);
+  drawBranches(p);
+  const flashes = [];
+  drawFiles(p, flashes);
+  drawCommitStrokes(p);
+  drawFlashes(flashes);
+  ctx.globalCompositeOperation = 'source-over';
+  drawAuthors(p);
+  drawHUD(p, f);
+  drawIntro(p);
+  drawOutro(p);
+}
+window.NFRAMES = NFRAMES; window.FPS = FPS; window.renderFrame = renderFrame;
+window.READY = Promise.all(['108px Brush', '700 30px Serif', '22px SerifI', '16px Mono'].map(f => document.fonts.load(f, 'AstaPS 第天0'))).then(() => document.fonts.ready).then(() => { renderFrame(0); return true; });
+</script></body></html>
