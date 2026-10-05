@@ -125,3 +125,4 @@ tools/history-video/data.js
 tools/history-video/fonts/
 tools/history-video/snap_*.png
 tools/history-video/*.mp4
+tools/history-video/github.js

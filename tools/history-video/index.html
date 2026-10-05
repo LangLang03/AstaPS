@@ -10,6 +10,7 @@ canvas{display:block}
 </style></head><body>
 <canvas id="c" width="1920" height="1080"></canvas>
 <script src="data.js"></script>
+<script src="github.js"></script>
 <script>
 'use strict';
 const W = 1920, H = 1080, FPS = 30;
@@ -57,17 +58,46 @@ const COMMITS = D.commits.map((c, i) => ({ i, t: c[0], a: c[1], s: c[2], h: c[3]
 const NC = COMMITS.length;
 const T0 = COMMITS[0].t, T1 = COMMITS[NC - 1].t;
 const dayOf = t => Math.floor((t + TZ) / 86400);
-const DAY0 = dayOf(T0), DAYN = dayOf(T1);
+const GH = window.GH || null;
+const iso = x => x ? Date.parse(x) / 1000 : null;
+let TEND = T1;
+if (GH) [...GH.stars.map(x => x[0]), ...GH.forks.map(x => x[0]), ...GH.pulls.flatMap(x => [x[1], x[2]]), ...GH.issues.map(x => x[1]), ...GH.releases.map(x => x[0])]
+  .forEach(x => { const t = iso(x); if (t && t > TEND) TEND = t; });
+const DAY0 = dayOf(T0), DAYN = dayOf(TEND);
 function dateStr(t) { const d = new Date((t + TZ) * 1000); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`; }
 function timeStr(t) { const d = new Date((t + TZ) * 1000); return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`; }
 // playback time of each commit: blend of commit index and real time
-COMMITS.forEach(c => { const u = 0.55 * c.i / (NC - 1) + 0.45 * (c.t - T0) / (T1 - T0); c.p = INTRO + 0.4 + u * (MAIN - 2.2); });
+// anchors = commits (+ "now" when GitHub activity continues after the last commit)
+const ANCH = COMMITS.map(c => ({ t: c.t }));
+if (TEND > T1 + 60) ANCH.push({ t: TEND });
+const NA = ANCH.length;
+ANCH.forEach((a, i) => { const u = 0.55 * i / (NA - 1) + 0.45 * (a.t - T0) / (TEND - T0); a.p = INTRO + 0.4 + u * (MAIN - 2.2); });
+COMMITS.forEach((c, i) => c.p = ANCH[i].p);
 function realTimeAt(p) {
-  if (p <= COMMITS[0].p) return T0;
-  if (p >= COMMITS[NC - 1].p) return T1;
-  let lo = 0, hi = NC - 1; while (hi - lo > 1) { const m = (lo + hi) >> 1; if (COMMITS[m].p <= p) lo = m; else hi = m; }
-  const a = COMMITS[lo], b = COMMITS[hi]; return lerp(a.t, b.t, (p - a.p) / Math.max(1e-6, b.p - a.p));
+  if (p <= ANCH[0].p) return T0;
+  if (p >= ANCH[NA - 1].p) return TEND;
+  let lo = 0, hi = NA - 1; while (hi - lo > 1) { const m = (lo + hi) >> 1; if (ANCH[m].p <= p) lo = m; else hi = m; }
+  const a = ANCH[lo], b = ANCH[hi]; return lerp(a.t, b.t, (p - a.p) / Math.max(1e-6, b.p - a.p));
 }
+function playbackAt(t) {
+  if (t <= ANCH[0].t) return ANCH[0].p;
+  if (t >= ANCH[NA - 1].t) return ANCH[NA - 1].p;
+  let lo = 0, hi = NA - 1; while (hi - lo > 1) { const m = (lo + hi) >> 1; if (ANCH[m].t <= t) lo = m; else hi = m; }
+  const a = ANCH[lo], b = ANCH[hi]; return lerp(a.p, b.p, (t - a.t) / Math.max(1e-6, b.t - a.t));
+}
+// ---------- GitHub activity ----------
+const STAR_INK = '#c08a1e', FORK_INK = '#3f7a4a', PR_INK = '#6a4c9c', ISSUE_INK = '#a0522d';
+const STARS = [], FORKS = [], PR_OPEN = [], PR_MERGED = [], ISSUES = [], RELEASES = [];
+if (GH) {
+  GH.stars.forEach(([t, who]) => STARS.push({ t: iso(t), who }));
+  GH.forks.forEach(([t, who]) => FORKS.push({ t: iso(t), who }));
+  GH.pulls.forEach(([n, ct, mt, cl, who, title]) => { PR_OPEN.push({ t: iso(ct), who, n, title }); if (mt) PR_MERGED.push({ t: iso(mt), who, n, title }); });
+  GH.issues.forEach(([n, ct, cl, who, title]) => ISSUES.push({ t: iso(ct), who, n, title }));
+  GH.releases.forEach(([t, tag, name]) => RELEASES.push({ t: iso(t), tag, name }));
+}
+[STARS, FORKS, PR_OPEN, PR_MERGED, ISSUES, RELEASES].forEach(a => { a.sort((x, y) => x.t - y.t); a.forEach((e, i) => { e.i = i; e.p = Math.max(INTRO + 0.4, playbackAt(e.t)); }); });
+const countAt = (arr, p) => { let lo = -1, hi = arr.length; while (hi - lo > 1) { const m = (lo + hi) >> 1; if (arr[m].p <= p) lo = m; else hi = m; } return lo + 1; };
+function cnNum(n) { const d = '零一二三四五六七八九'; if (n < 10) return d[n]; if (n < 20) return '十' + (n % 10 ? d[n % 10] : ''); return d[Math.floor(n / 10)] + '十' + (n % 10 ? d[n % 10] : ''); }
 
 // ---------- directory tree ----------
 function mkNode(name, parent) { return { name, parent, kids: new Map(), files: [], W: 0, depth: parent ? parent.depth + 1 : 0 }; }
@@ -102,6 +132,18 @@ COMMITS.forEach(c => {
   c.f.forEach((f, j) => { c.added += f[2]; c.deleted += f[3]; });
   lines += c.added - c.deleted; c.lines = lines;
 });
+// unified activity log
+const LOG = [];
+COMMITS.forEach(c => LOG.push({ p: c.p, head: c.h, who: c.a, col: AUTHOR_INK[c.a] || INK, meta: c.merge ? 'merge' : `${c.f.length} 文件  +${fmt(c.added)} −${fmt(c.deleted)}`, text: c.s }));
+const inkOf = who => AUTHOR_INK[who] || '#5a4a3a';
+STARS.forEach(e => LOG.push({ p: e.p, head: '★ STAR', who: e.who, col: STAR_INK, meta: `第 ${e.i + 1} 颗星`, text: `为 AstaPS 点亮了一颗星` }));
+FORKS.forEach(e => LOG.push({ p: e.p, head: '⑂ FORK', who: e.who, col: FORK_INK, meta: `第 ${e.i + 1} 个复刻`, text: `复刻到 ${e.who}/AstaPS` }));
+PR_OPEN.forEach(e => LOG.push({ p: e.p, head: `PR #${e.n}`, who: e.who, col: PR_INK, meta: 'pull request', text: e.title }));
+ISSUES.forEach(e => LOG.push({ p: e.p, head: `#${e.n}`, who: e.who, col: ISSUE_INK, meta: 'issue', text: e.title }));
+RELEASES.forEach(e => LOG.push({ p: e.p, head: 'TAG', who: e.tag, col: SEAL, meta: 'release', text: e.name && e.name !== e.tag ? e.name : `发布版本 ${e.tag}` }));
+LOG.sort((a, b) => a.p - b.p);
+const logIdxAt = p => { let lo = -1, hi = LOG.length; while (hi - lo > 1) { const m = (lo + hi) >> 1; if (LOG[m].p <= p) lo = m; else hi = m; } return lo; };
+
 // process slot assignment in event order: deletes first, then adds
 const SLOT = new Array(PATHS.length).fill(-1);
 const SLOTS_OF = new Array(PATHS.length); // list of [time, slot] per (re)add
@@ -264,6 +306,28 @@ const CAM = [];
   }
 }
 
+// ---------- star constellation & fork saplings ----------
+{
+  const fc = CAM[Math.round((INTRO + MAIN - 1) * FPS)];
+  const sc = fc.sc, ox = (VIEW.x0 + VIEW.x1) / 2, oy = (VIEW.y0 + VIEW.y1) / 2;
+  const blobs = NODES.filter(n => n.maxSlot).map(n => [(n.x - fc.cx) * sc + ox, (n.y - fc.cy) * sc + oy, diskR(n) * sc + 26]);
+  NODES.forEach(n => { if (n.parent) for (let t = 0.2; t < 1; t += 0.2) { const [x, y] = bez(n, t); blobs.push([(x - fc.cx) * sc + ox, (y - fc.cy) * sc + oy, 22]); } });
+  const R = mulberry(2026); const placed = [];
+  for (const st of STARS) {
+    let best = null, bestScore = -Infinity;
+    for (let k = 0; k < 600; k++) {
+      const x = 545 + R() * 905, y = 42 + R() * 440;
+      let d = Infinity; for (const [bx, by, br] of blobs) d = Math.min(d, Math.hypot(x - bx, y - by) - br);
+      let e = Infinity; for (const q of placed) e = Math.min(e, Math.hypot((x - q.x) / 1.9, y - q.y));
+      const score = Math.min(d, 50) * 1.2 + Math.min(e, 85) * 1.5 - y * 0.03;
+      if (score > bestScore) { bestScore = score; best = { x, y }; }
+    }
+    st.x = best.x; st.y = best.y; placed.push(best);
+  }
+  const XS = [250, 345, 440, 535, 630];
+  FORKS.forEach((f, i) => { const side = i % 2 ? 1 : -1, k = Math.floor(i / 2) % XS.length; f.wx = side * (XS[k] + (h1(i + 77) - 0.5) * 30); f.row = k % 3; f.h = 55 + h1(i + 91) * 40; f.seed = 7000 + i * 13; });
+}
+
 // ---------- author tracks ----------
 const AUTHORS = [...new Set(COMMITS.map(c => c.a))];
 const AUTH_COMMITS = {}; AUTHORS.forEach(a => AUTH_COMMITS[a] = []);
@@ -418,7 +482,7 @@ function drawGround(p) {
   if (a <= 0) return;
   const s = cam.sc;
   // ground strokes and rocks
-  brushLine(ctx, gx - 520 * s * a, gy + 6 * s, gx + 560 * s * a, gy + 2 * s, Math.max(2, 9 * s), INK, 0.75, 11, true, { bristles: 6, dry: 0.5 });
+  brushLine(ctx, gx - 690 * s * a, gy + 6 * s, gx + 700 * s * a, gy + 2 * s, Math.max(2, 9 * s), INK, 0.75, 11, true, { bristles: 6, dry: 0.5 });
   brushLine(ctx, gx - 300 * s * a, gy + 26 * s, gx + 180 * s * a, gy + 30 * s, Math.max(1.5, 5 * s), INK, 0.45, 12, true, { bristles: 4, dry: 0.6 });
   brushLine(ctx, gx + 220 * s * a, gy + 22 * s, gx + 420 * s * a, gy + 18 * s, Math.max(1.5, 4 * s), INK, 0.4, 13, true, { bristles: 4, dry: 0.6 });
   // grass clumps
@@ -584,6 +648,73 @@ function drawAuthors(p) {
   }
 }
 
+function starPath(cx, cy, r, rot) {
+  const pts = []; for (let k = 0; k <= 5; k++) { const a = -Math.PI / 2 + rot + k * Math.PI * 4 / 5; pts.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r]); }
+  return pts;
+}
+function drawStars(p) {
+  const shown = STARS.filter(s => s.p <= p);
+  if (!shown.length) return;
+  // constellation threads
+  ctx.setLineDash([2, 7]); ctx.lineWidth = 1.2;
+  for (let i = 1; i < shown.length; i++) {
+    const a = shown[i - 1], b = shown[i]; const g = ease((p - b.p - 0.3) / 0.8); if (g <= 0) continue;
+    ctx.strokeStyle = rgba(STAR_INK, 0.35); ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(lerp(a.x, b.x, g), lerp(a.y, b.y, g)); ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  for (const st of shown) {
+    const dt = p - st.p, g = clamp(dt / 0.7, 0, 1);
+    const tw = 1 + 0.08 * Math.sin(p * 2.3 + st.i * 1.7);
+    const r = 12 * tw * (1 + 0.6 * Math.max(0, 1 - dt / 0.5) * (dt < 0.5 ? 1 : 0));
+    // halo
+    const gr = ctx.createRadialGradient(st.x, st.y, 0, st.x, st.y, r * 2.4);
+    gr.addColorStop(0, rgba('#f2c75c', 0.22 * g)); gr.addColorStop(1, rgba('#f2c75c', 0));
+    ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(st.x, st.y, r * 2.4, 0, 7); ctx.fill();
+    // one-stroke brush star, drawn progressively
+    const pts = starPath(st.x, st.y, r, (h1(st.i + 5) - 0.5) * 0.4);
+    const dense = []; for (let k = 0; k < 5; k++) for (let q = 0; q < 8; q++) { const t = q / 8; dense.push([lerp(pts[k][0], pts[k + 1][0], t), lerp(pts[k][1], pts[k + 1][1], t)]); }
+    dense.push(pts[5]);
+    const nn = Math.max(2, Math.round(dense.length * g));
+    const sub = dense.slice(0, nn), hw = sub.map((_, j) => 0.7 + 0.8 * Math.sin(Math.PI * j / Math.max(1, sub.length - 1)));
+    brushStroke(ctx, sub, hw, STAR_INK, 0.95, 3000 + st.i, { bristles: 0, rough: 0.25, streaks: false });
+    // birth ripple
+    if (dt < 1.2) { ctx.strokeStyle = rgba(STAR_INK, 0.5 * (1 - dt / 1.2)); ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(st.x, st.y, r + dt * 50, 0, 7); ctx.stroke(); }
+    // name
+    ctx.globalAlpha = ease((dt - 0.3) / 0.5);
+    ctx.font = '14px Mono'; ctx.textAlign = 'center'; ctx.lineWidth = 4; ctx.strokeStyle = rgba(PAPER, 0.8); ctx.lineJoin = 'round';
+    ctx.strokeText(st.who, st.x, st.y + r + 18); ctx.fillStyle = '#7a5a14'; ctx.fillText(st.who, st.x, st.y + r + 18);
+    ctx.textAlign = 'left'; ctx.globalAlpha = 1;
+  }
+}
+function drawForks(p) {
+  const s = cam.sc;
+  for (const f of FORKS) {
+    const dt = p - f.p; if (dt < 0) continue;
+    const g = easeOut(dt / 1.4);
+    const n = 14, pts = [], hw = [];
+    for (let i = 0; i <= n; i++) { const t = i / n * g; const x = f.wx + Math.sin(t * 2.4 + f.seed) * 9 * t, y = -t * f.h; pts.push(toS(x, y)); hw.push(Math.max(0.8, (2.6 - 1.8 * t) * s * 1.3)); }
+    brushStroke(ctx, pts, hw, '#2c2a24', 0.85, f.seed, { bristles: 0 });
+    // leaves: ink dabs
+    for (let k = 0; k < 3; k++) {
+      const t = 0.35 + k * 0.25; if (g < t) continue; const lg = ease((g - t) / 0.2);
+      const x = f.wx + Math.sin(t * 2.4 + f.seed) * 9 * t, y = -t * f.h;
+      const side = k % 2 ? 1 : -1; const [sx, sy] = toS(x, y);
+      ctx.save(); ctx.translate(sx, sy); ctx.rotate(side * (0.7 + 0.3 * h1(f.seed + k)) - Math.PI / 2 * 0);
+      ctx.fillStyle = rgba(FORK_INK, 0.75); ctx.beginPath(); ctx.ellipse(side * 9 * s * lg, -3 * s, 10 * s * lg, 4 * s * lg, 0, 0, 7); ctx.fill(); ctx.restore();
+    }
+    // bud
+    if (g > 0.9) { const [bx, by] = toS(pts.length ? f.wx + Math.sin(g * 2.4 + f.seed) * 9 * g : f.wx, -g * f.h); const bs = Math.max(6, 16 * s) * easeOutBack((dt - 1.2) / 0.5); if (bs > 0) ctx.drawImage(SPRITES[0][f.seed & 3], bx - bs / 2, by - bs / 2, bs, bs); }
+    // birth ripple on the ground
+    const [gx, gy] = toS(f.wx, 0);
+    if (dt < 1.2) { ctx.strokeStyle = rgba(FORK_INK, 0.5 * (1 - dt / 1.2)); ctx.lineWidth = 1.5; ctx.beginPath(); ctx.ellipse(gx, gy, 10 + dt * 60, (10 + dt * 60) * 0.25, 0, 0, 7); ctx.stroke(); }
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = ease((dt - 0.4) / 0.5);
+    ctx.font = '13px Mono'; ctx.textAlign = 'center'; ctx.fillStyle = '#2f5a38';
+    ctx.fillText(f.who, gx, gy + 26 + f.row * 16);
+    ctx.textAlign = 'left'; ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'multiply';
+  }
+}
+
 // ---------- HUD ----------
 function drawSeal(x, y, s, text, alpha, seed) {
   ctx.save(); ctx.translate(x, y); ctx.rotate((h1(seed) - 0.5) * 0.08); ctx.globalAlpha = alpha;
@@ -618,6 +749,7 @@ function drawHUD(p, f) {
   revealText('AstaPS', 64, 132, '108px Brush', INK, ease((p - 0.2) / 1.4), 0.92);
   drawSeal(395, 88, 62, '源流年轮', ease((p - 1.4) / 0.3) * 0.92, 5);
   revealText('一部代码的生长史  ·  git log 水墨长卷', 70, 178, '30px Brush', '#4a4038', ease((p - 0.9) / 1.2), 0.85);
+  if (GH) revealText(`github.com/${GH.repo}  ·  ${GH.totals.language || ''}  ·  ${GH.totals.license || ''}`, 72, 204, '14px Mono', '#7a6d60', ease((p - 1.2) / 1.2), 0.9);
   // day counter
   if (hudA > 0) {
     const day = dayOf(rt) - DAY0;
@@ -625,6 +757,8 @@ function drawHUD(p, f) {
     ctx.fillStyle = INK; ctx.font = '74px Brush'; ctx.fillText(`第 ${day} 天`, 66, 270);
     ctx.font = '700 30px Serif'; ctx.fillStyle = '#4a4038'; ctx.fillText(`${dateStr(rt)}  ${timeStr(rt)}`, 72, 312);
     ctx.font = '22px SerifI'; ctx.fillStyle = '#6a5d50'; ctx.fillText(`Day ${day} of ${DAYN - DAY0}`, 72, 344);
+    const nr = countAt(RELEASES, p);
+    if (nr) { const r = RELEASES[nr - 1]; ctx.font = '15px Mono'; ctx.fillStyle = SEAL; ctx.fillText(`最新版本 ${r.tag}  ·  共 ${nr} 个发布`, 72, 374); }
     ctx.globalAlpha = 1;
   }
   // stats (top right, vertical columns like a scroll)
@@ -637,12 +771,27 @@ function drawHUD(p, f) {
     const authorsSoFar = new Set(COMMITS.slice(0, ci + 1).map(c => c.a)).size;
     const stats = [['提交', `${ci + 1}`, `/ ${NC}`], ['文件', fmt(filesAlive), ''], ['行数', fmt(ln), ''], ['作者', `${authorsSoFar}`, '']];
     stats.forEach(([k, v, sub], i) => {
-      const y = 92 + i * 66;
+      const y = 80 + i * 56;
       ctx.font = '30px Brush'; ctx.fillStyle = SEAL; ctx.fillText(k, sx, y);
       ctx.font = '700 38px Serif'; ctx.fillStyle = INK; ctx.fillText(v, sx + 70, y + 2);
       if (sub) { const w = ctx.measureText(v).width; ctx.font = '24px SerifI'; ctx.fillStyle = '#6a5d50'; ctx.fillText(sub, sx + 80 + w, y + 2); }
       brushLine(ctx, sx, y + 16, sx + 320, y + 16, 2.2, INK, 0.3, 70 + i, true, { bristles: 0 });
     });
+    if (GH) {
+      const pairs = [[['星标', STAR_INK, countAt(STARS, p), STARS], ['复刻', FORK_INK, countAt(FORKS, p), FORKS]],
+                     [['PR', PR_INK, countAt(PR_OPEN, p), PR_OPEN], ['议题', ISSUE_INK, countAt(ISSUES, p), ISSUES]]];
+      pairs.forEach((row, r) => row.forEach(([k, col, n, arr], j) => {
+        const x = sx + j * 170, y = 80 + (4 + r) * 56;
+        const last = n ? arr[n - 1] : null; const pop = last ? Math.max(0, 1 - (p - last.p) / 0.6) : 0;
+        ctx.font = '30px Brush'; ctx.fillStyle = col; ctx.fillText(k, x, y);
+        const kw = ctx.measureText(k).width;
+        ctx.font = '700 36px Serif'; const nw = ctx.measureText(String(n)).width;
+        ctx.save(); ctx.translate(x + kw + 12, y - 12); ctx.scale(1 + 0.35 * pop, 1 + 0.35 * pop);
+        ctx.fillStyle = INK; ctx.fillText(String(n), 0, 14); ctx.restore();
+        if (k === 'PR') { const m = countAt(PR_MERGED, p); ctx.font = '20px SerifI'; ctx.fillStyle = '#6a5d50'; ctx.fillText(`/ ${m} 合并`, x + kw + 20 + nw, y); }
+      }));
+      brushLine(ctx, sx, 80 + 5 * 56 + 16, sx + 320, 80 + 5 * 56 + 16, 2.2, INK, 0.3, 76, true, { bristles: 0 });
+    }
     ctx.globalAlpha = 1;
   }
   // contributors leaderboard
@@ -651,7 +800,7 @@ function drawHUD(p, f) {
     // animate the newest commit's bar growth
     const list = Object.entries(counts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
     const max = Math.max(1, ...list.map(x => x[1]));
-    let y = 400;
+    let y = GH ? 436 : 400;
     ctx.globalAlpha = hudA;
     ctx.font = '34px Brush'; ctx.fillStyle = INK; ctx.fillText('执笔者', sx, y); y += 18;
     brushLine(ctx, sx, y, sx + 140, y, 4, SEAL, 0.8, 99, true, { bristles: 3 });
@@ -663,15 +812,15 @@ function drawHUD(p, f) {
       ctx.font = '28px Brush'; ctx.fillStyle = col; ctx.fillText(a, sx, y);
       ctx.font = '700 24px Serif'; ctx.fillStyle = INK; ctx.textAlign = 'right'; ctx.fillText(String(n), sx + 330, y); ctx.textAlign = 'left';
       const bw = 300 * nn / max;
-      if (bw > 4) brushLine(ctx, sx, y + 14, sx + bw, y + 14, 9, col, 0.85, 200 + hashStr(a) % 1000, true, { bristles: 4, dry: 0.45 });
-      y += 58;
+      if (bw > 4) brushLine(ctx, sx, y + 12, sx + bw, y + 12, 8, col, 0.85, 200 + hashStr(a) % 1000, true, { bristles: 4, dry: 0.45 });
+      y += GH ? 47 : 58;
     });
     ctx.globalAlpha = 1;
   }
   // legend
   if (hudA > 0) {
     ctx.globalAlpha = hudA * 0.9;
-    let lx = 1545, ly = 856;
+    let lx = 1545, ly = 842;
     ctx.font = '24px Brush'; ctx.fillStyle = '#4a4038'; ctx.fillText('花色 · 文件类型', lx, ly - 8);
     TYPES.slice(0, 8).forEach((t, i) => {
       const x = lx + (i % 2) * 175, y = ly + 24 + Math.floor(i / 2) * 29;
@@ -709,6 +858,11 @@ function drawTimeline(p, rt, ci, hudA) {
     ctx.fillStyle = col; ctx.globalAlpha = hudA * 0.75 * pop;
     ctx.beginPath(); ctx.arc(x, TL.y - 16 - (h1(i) * 9), sz * 0.45, 0, 7); ctx.fill();
   }
+  // GitHub markers lane
+  const mk = (arr, draw) => arr.forEach(e => { if (e.p > p) return; ctx.globalAlpha = hudA * 0.9 * ease((p - e.p) / 0.3); draw(X(e.t), TL.y - 42, e); });
+  mk(RELEASES, (x, y) => { ctx.fillStyle = rgba(SEAL, 0.8); ctx.fillRect(x - 2.5, y + 4, 5, 5); });
+  mk(STARS, (x, y) => { const pts = starPath(x, y - 2, 6.5, 0); ctx.fillStyle = STAR_INK; ctx.beginPath(); pts.forEach((q, i) => i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1])); ctx.fill(); });
+  mk(FORKS, (x, y) => { ctx.strokeStyle = FORK_INK; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x, y + 6); ctx.lineTo(x, y); ctx.lineTo(x - 4, y - 6); ctx.moveTo(x, y); ctx.lineTo(x + 4, y - 6); ctx.stroke(); });
   ctx.globalAlpha = hudA;
   // progress stroke
   const xe = X(rt);
@@ -736,25 +890,25 @@ function drawLog(p, ci, hudA) {
   ctx.globalAlpha = hudA;
   ctx.font = '32px Brush'; ctx.fillStyle = INK; ctx.fillText('落笔记录', x, y);
   brushLine(ctx, x, y + 16, x + 150, y + 16, 4, SEAL, 0.8, 98, true, { bristles: 3 });
-  if (ci < 0) { ctx.globalAlpha = 1; return; }
-  const newest = COMMITS[ci]; const slide = 1 - easeOut((p - newest.p) / 0.45);
+  const li = logIdxAt(p);
+  if (li < 0) { ctx.globalAlpha = 1; return; }
+  const newest = LOG[li]; const slide = 1 - easeOut((p - newest.p) / 0.45);
   y = 470 - slide * 96;
   ctx.save(); ctx.beginPath(); ctx.rect(0, 444, 520, 520); ctx.clip();
   for (let k = 0; k < 6; k++) {
-    const i = ci - k; if (i < 0) break;
-    const c = COMMITS[i];
+    const i = li - k; if (i < 0) break;
+    const c = LOG[i];
     let a = hudA * (k === 0 ? ease((p - c.p) / 0.35) : 1) * Math.max(0, 1 - k * 0.2);
     if (y > 930) a *= Math.max(0, 1 - (y - 930) / 40);
     if (a <= 0.01) { y += 96; continue; }
     ctx.globalAlpha = a;
-    ctx.font = '15px Mono'; ctx.fillStyle = '#8a7d70'; ctx.fillText(c.h, x, y);
-    ctx.font = '24px Brush'; ctx.fillStyle = AUTHOR_INK[c.a] || INK; ctx.fillText(c.a, x + 80, y + 1);
-    const aw = ctx.measureText(c.a).width;
-    ctx.font = '15px Mono'; ctx.fillStyle = '#8a7d70';
-    const meta = c.merge ? 'merge' : `${c.f.length} 文件  +${fmt(c.added)} −${fmt(c.deleted)}`;
-    ctx.font = '15px Mono'; ctx.fillText(meta, x + 92 + aw, y);
+    ctx.font = '15px Mono'; ctx.fillStyle = c.head.length > 7 || c.head[0] === '#' || c.head === 'TAG' ? c.col : '#8a7d70'; ctx.fillText(c.head, x, y);
+    const hw0 = Math.max(72, ctx.measureText(c.head).width + 10);
+    ctx.font = '24px Brush'; ctx.fillStyle = c.col; ctx.fillText(c.who, x + hw0, y + 1);
+    const aw = ctx.measureText(c.who).width;
+    ctx.font = '15px Mono'; ctx.fillStyle = '#8a7d70'; ctx.fillText(c.meta, x + hw0 + 12 + aw, y);
     ctx.font = '700 20px Serif'; ctx.fillStyle = INK;
-    let ls = wrapLines(c.s, 380, 2);
+    let ls = wrapLines(c.text, 380, 2);
     if (k === 0) { const tot = ls.join('').length; let budget = Math.ceil(tot * ease((p - c.p) / 0.6)); ls = ls.map(l => { const r = l.slice(0, Math.max(0, budget)); budget -= l.length; return r; }); }
     ls.forEach((l, j) => ctx.fillText(l, x, y + 28 + j * 24));
     y += 96;
@@ -775,7 +929,7 @@ function drawIntro(p) {
   ctx.save(); ctx.beginPath(); ctx.rect(0, 0, W * ease((p - 0.3) / 1.5), H); ctx.clip();
   ctx.fillText('从第 0 天，到今天', (VIEW.x0 + VIEW.x1) / 2, 560);
   ctx.font = '26px SerifI'; ctx.fillStyle = '#6a5d50';
-  ctx.fillText(`${dateStr(T0)}  —  ${dateStr(T1)}  ·  ${NC} commits`, (VIEW.x0 + VIEW.x1) / 2, 606);
+  ctx.fillText(`${dateStr(T0)}  —  ${dateStr(TEND)}  ·  ${NC} commits${GH ? `  ·  ${STARS.length} stars  ·  ${FORKS.length} forks` : ''}`, (VIEW.x0 + VIEW.x1) / 2, 606);
   ctx.restore();
   ctx.textAlign = 'left'; ctx.globalAlpha = 1;
 }
@@ -789,20 +943,28 @@ function drawOutro(p) {
   const cx = W / 2 - 40;
   revealText('', 0, 0, '10px Brush', INK, 0);
   ctx.save(); ctx.beginPath(); ctx.rect(0, 0, cx - 400 + 900 * ease(u / 1.8), H); ctx.clip();
-  ctx.font = '120px Brush'; ctx.fillStyle = INK; ctx.fillText('十七日 · 一树繁花', cx, 440);
+  ctx.font = '120px Brush'; ctx.fillStyle = INK; ctx.fillText(`${cnNum(DAYN - DAY0)}日 · 一树繁花`, cx, 420);
   ctx.restore();
   const b = ease((u - 1.4) / 1.2); ctx.globalAlpha = b;
   const last = COMMITS[NC - 1];
   ctx.font = '46px Brush'; ctx.fillStyle = '#3a332b';
-  ctx.fillText(`${NC} 次提交  ·  ${AUTHORS.length} 位执笔者  ·  ${fmt(last.alive[ROOT.id])} 个文件  ·  ${fmt(last.lines)} 行`, cx, 530);
+  ctx.fillText(`${NC} 次提交  ·  ${AUTHORS.length} 位执笔者  ·  ${fmt(last.alive[ROOT.id])} 个文件  ·  ${fmt(last.lines)} 行`, cx, 510);
+  if (GH) {
+    ctx.font = '42px Brush';
+    const items = [[`★ ${STARS.length} 星标`, STAR_INK], [`⑂ ${FORKS.length} 复刻`, FORK_INK], [`${PR_OPEN.length} PR · ${PR_MERGED.length} 合并`, PR_INK], [`${ISSUES.length} 议题`, ISSUE_INK], [`${RELEASES.length} 个发布`, SEAL]];
+    const sep = '  ·  '; const tw = items.reduce((w, [t]) => w + ctx.measureText(t).width, 0) + ctx.measureText(sep).width * (items.length - 1);
+    let x = cx - tw / 2; ctx.textAlign = 'left';
+    items.forEach(([t, col], i) => { ctx.fillStyle = col; ctx.fillText(t, x, 572); x += ctx.measureText(t).width; if (i < items.length - 1) { ctx.fillStyle = '#8a7d70'; ctx.fillText(sep, x, 572); x += ctx.measureText(sep).width; } });
+    ctx.textAlign = 'center';
+  }
   ctx.font = '30px SerifI'; ctx.fillStyle = '#6a5d50';
-  ctx.fillText(`Day 0 (${dateStr(T0)})  →  Day ${DAYN - DAY0} (${dateStr(T1)})`, cx, 585);
+  ctx.fillText(`Day 0 (${dateStr(T0)})  →  Day ${DAYN - DAY0} (${dateStr(TEND)})`, cx, 630);
   const c = ease((u - 2.6) / 1.0); ctx.globalAlpha = c;
   ctx.font = '26px Brush'; ctx.fillStyle = '#4a4038';
-  ctx.fillText('每一帧皆由 JavaScript 逐笔绘制于 Canvas', cx, 660);
+  ctx.fillText('每一帧皆由 JavaScript 逐笔绘制于 Canvas', cx, 690);
   ctx.textAlign = 'left'; ctx.globalAlpha = 1;
   // seal slam
-  const sv = (u - 3.2); if (sv > 0) { const s = 1 + 0.5 * (1 - easeOut(sv / 0.25)); drawSeal(cx + 540, 392, 96 * s, '源流年轮', ease(sv / 0.15) * 0.95, 9); }
+  const sv = (u - 3.2); if (sv > 0) { const s = 1 + 0.5 * (1 - easeOut(sv / 0.25)); drawSeal(cx + 540, 372, 96 * s, '源流年轮', ease(sv / 0.15) * 0.95, 9); }
 }
 
 // ---------- main render ----------
@@ -814,6 +976,7 @@ function renderFrame(f) {
   ctx.drawImage(PAPER_LAYER, 0, 0);
   ctx.globalCompositeOperation = 'multiply';
   drawGround(p);
+  drawForks(p);
   drawTrunk(p);
   drawBranches(p);
   const flashes = [];
@@ -821,6 +984,7 @@ function renderFrame(f) {
   drawCommitStrokes(p);
   drawFlashes(flashes);
   ctx.globalCompositeOperation = 'source-over';
+  drawStars(p);
   drawAuthors(p);
   drawHUD(p, f);
   drawIntro(p);
