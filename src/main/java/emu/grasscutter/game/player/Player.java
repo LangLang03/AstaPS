@@ -110,6 +110,7 @@ public class Player implements PlayerHook, FieldFetch {
     @Getter private Set<Integer> flyCloakList;
     @Getter private Set<Integer> traceEffectList;
     @Getter private Set<Integer> costumeList;
+    @Getter private Set<Integer> weaponSkinList;
     @Getter private Set<Integer> personalLineList;
     @Getter @Setter private Set<Integer> rewardedLevels;
     @Getter @Setter private Set<Integer> homeRewardedLevels;
@@ -282,6 +283,7 @@ public class Player implements PlayerHook, FieldFetch {
         this.flyCloakList = new HashSet<>();
         this.traceEffectList = new HashSet<>();
         this.costumeList = new HashSet<>();
+        this.weaponSkinList = new HashSet<>();
         this.personalLineList = new HashSet<>();
         this.towerData = new TowerData();
         this.collectionRecordStore = new PlayerCollectionRecords();
@@ -1019,6 +1021,26 @@ public class Player implements PlayerHook, FieldFetch {
         this.sendPacket(new PacketAvatarGainCostumeNotify(costumeId));
     }
 
+    /** 0 means "no skin" (unequip) and must count as valid, otherwise the client's
+     * unequip/resend request gets a failure retcode and shows "server error". */
+    public boolean hasWeaponSkin(int weaponSkinId) {
+        return weaponSkinId <= 0 || this.getWeaponSkinList().contains(weaponSkinId);
+    }
+
+    /** Unlocks one or more weapon skins (from ITEM_USE_ADD_WEAPON_SKIN materials). */
+    public void addWeaponSkins(List<Integer> skinIds) {
+        boolean changed = false;
+        for (int id : skinIds) {
+            if (id != 0 && this.getWeaponSkinList().add(id)) {
+                changed = true;
+            }
+        }
+        if (changed) {
+            this.save();
+            this.sendPacket(new PacketAvatarWeaponSkinDataNotify(this));
+        }
+    }
+
     public void addTraceEffect(int traceEffectId) {
         this.getTraceEffectList().add(traceEffectId);
         this.sendPacket(new PacketAvatarGainTraceEffectNotify(traceEffectId));
@@ -1522,6 +1544,12 @@ public class Player implements PlayerHook, FieldFetch {
         session.send(new PacketStoreWeightLimitNotify());
         session.send(new PacketPlayerStoreNotify(this));
         session.send(new PacketAvatarDataNotify(this));
+        session.send(new PacketAvatarWeaponSkinDataNotify(this));
+        // 登录时下发头像/头像框数据：否则重登后个人主页的头像框会显示成"?"，要重新应用一次才恢复。
+        // (HandlerMiao21517 修复头像框时发的也是这一组：25989+6326+4162。)
+        session.send(new PacketBeyondProfilePictureDataNotify(this));
+        session.send(new PacketBeyondPlayerDetailRsp(this));
+        session.send(new PacketGetPlayerSocialDetailRsp(this.getSocialDetail(), 0));
 
         this.getProgressManager().onPlayerLogin();
         try {
