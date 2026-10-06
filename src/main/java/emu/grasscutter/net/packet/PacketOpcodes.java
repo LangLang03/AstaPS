@@ -237,7 +237,7 @@ public final class PacketOpcodes {
     public static final int EffigyChallengeV2ChooseSkillRsp = 9279;
     public static final int ACNCLLFKKPE = 314;
     public static final int AcceptCityReputationRequestRsp = 0; // 7.1 CmdId unknown (7.0: 1148)
-    public static final int GetActivityInfoReq = 0; // 7.1 CmdId unknown (7.0: 1160)
+    public static final int GetActivityInfoReq = 186; // 7.1 client: NLOMEGMJDGJ, ids in packed field 14
     // public static final int JDIHBJAEPDK = 16;
     public static final int SetPlayerHeadImageReq = 0; // 7.1 CmdId unknown (7.0: 1163)
     // public static final int MKIAGIKCAOB = 24143;
