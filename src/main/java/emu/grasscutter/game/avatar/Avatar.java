@@ -89,6 +89,7 @@ public class Avatar {
 
     @Getter @Setter private int flyCloak;
     @Getter @Setter private int costume;
+    @Getter @Setter private int weaponSkinId;
     @Getter private int bornTime;
 
     @Getter @Setter private int fetterLevel = 1;
@@ -1207,7 +1208,8 @@ public class Avatar {
                         .setFetterInfo(avatarFetter)
                         .setWearingFlycloakId(this.getFlyCloak())
                         .setCostumeId(this.getCostume())
-                        .setTraceEffectId(this.getTraceEffect());
+                        .setTraceEffectId(this.getTraceEffect())
+                        .setWeaponSkinId(this.getWeaponSkinId());
 
         this.getSkillExtraChargeMap()
                 .forEach(
@@ -1264,7 +1266,8 @@ public class Avatar {
                         .putAllSkillLevelMap(this.getSkillLevelMap())
                         .putAllProudSkillExtraLevelMap(this.getProudSkillBonusMap())
                         .setFetterInfo(avatarFetter)
-                        .setCostumeId(this.getCostume());
+                        .setCostumeId(this.getCostume())
+                        .setWeaponSkinId(this.getWeaponSkinId());
 
         showAvatarInfo.putPropMap(
                 PlayerProperty.PROP_LEVEL.getId(),
