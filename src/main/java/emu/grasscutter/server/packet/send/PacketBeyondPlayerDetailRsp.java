@@ -78,7 +78,7 @@ public class PacketBeyondPlayerDetailRsp extends BasePacket {
 
         BeyondProfilePictureWire.varintField(d, 1, uid);
         BeyondProfilePictureWire.stringField(d, 4, player.getNickname() == null ? "" : player.getNickname());
-        BeyondProfilePictureWire.stringField(d, 12, player.getSignature() == null ? "" : player.getSignature());
+        BeyondProfilePictureWire.stringField(d, 5, player.getSignature() == null ? "" : player.getSignature()); // 7.1: signature=field5 (was wrongly 12)
         BeyondProfilePictureWire.varintField(d, 18, nameCardId);
 
         // field23 = MFDLDKCDGCF { avatar_id=1, costume_id=2, profile_picture_id=3, profile_frame_id=4 }
@@ -95,17 +95,6 @@ public class PacketBeyondPlayerDetailRsp extends BasePacket {
         if (icon == null) icon = "UI_AvatarIcon_PlayerGirl_Circle";
         BeyondProfilePictureWire.bytesField(d, 3, BeyondProfilePictureWire.ofnjdnhlgji(pictureId, icon, headImage));
 
-        // field14 = repeated uint32 DGOKHBBGLKH（已解锁头像 id）
-        try {
-            java.io.ByteArrayOutputStream ids = new java.io.ByteArrayOutputStream(512);
-            int __countK = 0;
-            for (BeyondProfilePictureTable.Entry e : BeyondProfilePictureTable.all()) {
-                if (__countK++ >= 3) break;
-                BeyondProfilePictureWire.varint(ids, e.id);
-            }
-            BeyondProfilePictureWire.bytesField(d, 14, ids.toByteArray());
-        } catch (Throwable ignored) {
-        }
         return d.toByteArray();
     }
 }

@@ -1545,6 +1545,11 @@ public class Player implements PlayerHook, FieldFetch {
         session.send(new PacketPlayerStoreNotify(this));
         session.send(new PacketAvatarDataNotify(this));
         session.send(new PacketAvatarWeaponSkinDataNotify(this));
+        // 登录时下发头像/头像框数据：否则重登后个人主页的头像框会显示成"?"，要重新应用一次才恢复。
+        // (HandlerMiao21517 修复头像框时发的也是这一组：25989+6326+4162。)
+        session.send(new PacketBeyondProfilePictureDataNotify(this));
+        session.send(new PacketBeyondPlayerDetailRsp(this));
+        session.send(new PacketGetPlayerSocialDetailRsp(this.getSocialDetail(), 0));
 
         this.getProgressManager().onPlayerLogin();
         try {
