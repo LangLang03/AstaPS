@@ -111,12 +111,19 @@ public class ActivityManager extends BasePlayerManager {
         // The schedule alone does not put an activity on screen: the client also needs its
         // ActivityInfo, and it does not reliably ask for it before deciding whether to show the
         // activity entry. Push it for every activity running now.
+        // One broken activity must not take the login down with it.
         activityConfigItemMap.keySet().stream()
                 .filter(this::isActivityActive)
                 .forEach(
-                        activityId ->
+                        activityId -> {
+                            try {
                                 player.sendPacket(
-                                        new PacketActivityInfoNotify(getInfoProtoByActivityId(activityId))));
+                                        new PacketActivityInfoNotify(getInfoProtoByActivityId(activityId)));
+                            } catch (RuntimeException e) {
+                                Grasscutter.getLogger()
+                                        .warn("Unable to send activity {} at login.", activityId, e);
+                            }
+                        });
     }
 
     /** trigger activity watcher */
