@@ -1309,6 +1309,19 @@ public final class AbilityManager extends BasePlayerManager {
         }
     }
 
+    /**
+     * Abilities in {@link emu.grasscutter.GameConstants#DEFAULT_ABILITY_STRINGS} that belong to
+     * Natlan only. The client draws Natlan HUD (phlogiston gauge, nightsoul) as soon as these are
+     * present, so they must not be attached outside Natlan.
+     */
+    private static final java.util.Set<Integer> NATLAN_ONLY_ABILITY_HASHES =
+            java.util.Set.of(
+                    emu.grasscutter.utils.Utils.abilityHash("DynamicAbility_Phlogiston"),
+                    emu.grasscutter.utils.Utils.abilityHash("DynamicAbility_NightsoulBlessing"),
+                    emu.grasscutter.utils.Utils.abilityHash("Avatar_NyxState_Listener"),
+                    emu.grasscutter.utils.Utils.abilityHash("Avatar_TriggerNyxInstant"),
+                    emu.grasscutter.utils.Utils.abilityHash("TeamAbility_NightsoulBurst"));
+
     private void addAbilityByHash(EntityAvatar entity, int hash) {
         var name = GameData.getAbilityHashes().get(hash);
         var data = name != null ? GameData.getAbilityData(name) : null;
@@ -1320,11 +1333,17 @@ public final class AbilityManager extends BasePlayerManager {
         if (avatarData.getAbilities() != null) {
             for (int hash : avatarData.getAbilities()) addAbilityByHash(avatar, hash);
         }
-        // DynamicAbility_Phlogiston is what makes the client draw the phlogiston gauge at all,
-        // and it used to be attached only inside scene 101. That is why the party's global value
-        // was invisible everywhere else: the value was there, nothing was drawing it. It is a
-        // default ability like the rest of them now, so the gauge follows the party.
+        // DynamicAbility_Phlogiston is what makes the client draw the phlogiston gauge at all.
+        // It used to be attached only inside scene 101, so the gauge was invisible everywhere
+        // else; making it a plain default fixed that but also made the client draw the gauge in
+        // every region. TeamManager re-gated the team-ability path on Natlan afterwards, which
+        // left this avatar path ungated - hence the gauge outside Natlan. Skip the Natlan-only
+        // entries here when the player is not in Natlan, so all paths agree.
+        boolean inNatlan = emu.grasscutter.game.world.RegionGate.inNatlan(player);
         for (int hash : emu.grasscutter.GameConstants.DEFAULT_ABILITY_HASHES) {
+            if (!inNatlan && NATLAN_ONLY_ABILITY_HASHES.contains(hash)) {
+                continue;
+            }
             addAbilityByHash(avatar, hash);
         }
         for (int hash : player.getTeamManager().getTeamResonancesConfig()) {

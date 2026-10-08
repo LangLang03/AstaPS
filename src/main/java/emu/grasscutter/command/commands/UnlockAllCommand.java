@@ -7,7 +7,6 @@ import emu.grasscutter.data.GameData;
 import emu.grasscutter.game.player.*;
 import emu.grasscutter.server.packet.send.*;
 import java.util.*;
-import java.util.stream.IntStream;
 
 @Command(
         label = "unlockall",
@@ -16,7 +15,7 @@ import java.util.stream.IntStream;
         permissionTargeted = "player.unlockall.others")
 public final class UnlockAllCommand implements CommandHandler {
 
-    private static final List<Integer> SCENE_AREAS = IntStream.range(1, 1000).boxed().toList();
+
 
     @Override
     public void execute(Player sender, Player targetPlayer, List<String> args) {
@@ -41,7 +40,20 @@ public final class UnlockAllCommand implements CommandHandler {
                 points.add(pointId);
             }
             targetPlayer.getUnlockedScenePoints(sceneId).addAll(points);
-            targetPlayer.getUnlockedSceneAreas(sceneId).addAll(SCENE_AREAS);
+
+            // Open the map area each unlocked point actually belongs to, instead of marking every
+            // area id 1..999 as unlocked. Dumping the whole range lit up the entire map at once,
+            // which left points visible-but-inactive and made the fog meaningless. Area ids are
+            // unlocked through the same hierarchy helper a real statue unlock uses, so the lit
+            // region matches the points the player really has.
+            for (int pointId : points) {
+                var entry = GameData.getScenePointEntryById(sceneId, pointId);
+                if (entry == null) continue;
+                int areaId = entry.getPointData().getAreaId();
+                if (areaId > 0) {
+                    targetPlayer.getProgressManager().unlockSceneAreaHierarchy(sceneId, areaId);
+                }
+            }
         });
 
         int curScene = targetPlayer.getSceneId();

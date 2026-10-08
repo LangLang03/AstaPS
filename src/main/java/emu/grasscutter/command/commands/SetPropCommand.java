@@ -18,7 +18,7 @@ import java.util.stream.IntStream;
         permissionTargeted = "player.setprop.others")
 public final class SetPropCommand implements CommandHandler {
 
-    private static final List<Integer> sceneAreas = IntStream.range(1, 1000).boxed().toList();
+
     private final Map<String, Prop> props;
 
     public SetPropCommand() {
@@ -255,7 +255,19 @@ public final class SetPropCommand implements CommandHandler {
                                 targetPlayer.getUnlockedScenePoints(sceneId).addAll(scenePointsBackup);
                             }
 
-                            targetPlayer.getUnlockedSceneAreas(sceneId).addAll(sceneAreas);
+                            // Only open the areas the newly unlocked points belong to. Adding every
+                            // id in 1..999 lit the whole map and desynced area state from the point
+                            // state, which is what made waypoints show up but stay unusable.
+                            for (var pointId : targetPlayer.getUnlockedScenePoints(sceneId)) {
+                                var entry = GameData.getScenePointEntryById(sceneId, pointId);
+                                if (entry == null) continue;
+                                int areaId = entry.getPointData().getAreaId();
+                                if (areaId > 0) {
+                                    targetPlayer
+                                            .getProgressManager()
+                                            .unlockSceneAreaHierarchy(sceneId, areaId);
+                                }
+                            }
 
                             targetPlayer.sendPacket(
                                     new PacketScenePointUnlockNotify(

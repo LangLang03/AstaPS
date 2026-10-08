@@ -232,6 +232,9 @@ public class Scene {
             player.setSceneId(this.getId());
             player.setScene(this);
 
+            // Natlan-only properties (phlogiston gauge) follow the region the player is now in.
+            RegionGate.applyRegionProperties(player);
+
             this.setupPlayerAvatars(player);
         }
     }

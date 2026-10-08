@@ -53,13 +53,22 @@ public class PacketPlayerEnterSceneInfoNotify extends BasePacket {
     public PacketPlayerEnterSceneInfoNotify(Player player) {
         super(PacketOpcodes.PlayerEnterSceneInfoNotify);
 
-        AbilityScalarValueEntry scalarValue = AbilityScalarValueEntry.newBuilder()
-                .setKey(AbilityStringOuterClass.AbilityString.newBuilder().setHash(Utils.abilityHash("SGV_PlayerTeam_Phlogiston"))
-                        .setStr("SGV_PlayerTeam_Phlogiston")
-                        .build())
-                        .setFloatValue(100)
-                .build();
-                player.setPhlogistonValue(100);
+        // Only push the phlogiston SGV while the player is in Natlan. Sending it everywhere is
+        // what made the client draw the phlogiston gauge in every region; the value itself is
+        // still tracked on the player so re-entering Natlan shows the gauge again.
+        boolean inNatlan = emu.grasscutter.game.world.RegionGate.inNatlan(player);
+
+        AbilitySyncStateInfo.Builder teamInfo = AbilitySyncStateInfo.newBuilder();
+        if (inNatlan) {
+            AbilityScalarValueEntry scalarValue = AbilityScalarValueEntry.newBuilder()
+                    .setKey(AbilityStringOuterClass.AbilityString.newBuilder().setHash(Utils.abilityHash("SGV_PlayerTeam_Phlogiston"))
+                            .setStr("SGV_PlayerTeam_Phlogiston")
+                            .build())
+                            .setFloatValue(100)
+                    .build();
+            player.setPhlogistonValue(100);
+            teamInfo.addSgvDynamicValueMap(scalarValue);
+        }
 
         long hexCount = player.getTeamManager().getActiveTeam().stream()
                 .filter(e -> e != null && getHexenzirkelIds().contains(e.getAvatar().getAvatarId()))
@@ -85,8 +94,7 @@ public class PacketPlayerEnterSceneInfoNotify extends BasePacket {
                 .setFloatValue(moonPhaseCount)
                 .build();
 
-        AbilitySyncStateInfo.Builder teamInfo = AbilitySyncStateInfo.newBuilder()
-                .addSgvDynamicValueMap(scalarValue)
+        teamInfo
                 .addSgvDynamicValueMap(hexLevel)
                 .addSgvDynamicValueMap(moonPhaseLevel);
 

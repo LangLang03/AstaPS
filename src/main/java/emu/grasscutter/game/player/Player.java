@@ -652,7 +652,10 @@ public class Player implements PlayerHook, FieldFetch {
                 withQuesting ? 10000 : 0);
         this.setOrFetch(PlayerProperty.PROP_PLAYER_RESIN, 200);
         this.setOrFetch(PlayerProperty.PROP_PHLOGISTON_MAX_VALUE, 10000);
-        this.setProperty(PlayerProperty.PROP_PHLOGISTON_ENABLE, 1);
+        // Starts disabled; Scene.addPlayer sets it from the actual region via
+        // RegionGate.applyRegionProperties. Enabling it here unconditionally made the client draw
+        // the phlogiston gauge in every region.
+        this.setProperty(PlayerProperty.PROP_PHLOGISTON_ENABLE, 0);
 
         this.setProperty(PlayerProperty.PROP_CUR_PERSIST_STAMINA,
             this.getProperty(PlayerProperty.PROP_MAX_STAMINA));

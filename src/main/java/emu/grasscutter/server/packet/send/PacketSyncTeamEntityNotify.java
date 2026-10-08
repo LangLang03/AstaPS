@@ -16,13 +16,20 @@ public class PacketSyncTeamEntityNotify extends BasePacket {
     public PacketSyncTeamEntityNotify(Player player) {
         super(PacketOpcodes.SyncTeamEntityNotify);
 
-        AbilityScalarValueEntryOuterClass.AbilityScalarValueEntry scalarValue = AbilityScalarValueEntryOuterClass.AbilityScalarValueEntry.newBuilder()
-                .setKey(AbilityStringOuterClass.AbilityString.newBuilder().setHash(Utils.abilityHash("SGV_PlayerTeam_Phlogiston"))
-                        .setStr("SGV_PlayerTeam_Phlogiston")
-                        .build())
-                .setFloatValue(player.getPhlogistonValue())
-                .build();
-        AbilitySyncStateInfo phlogiston = AbilitySyncStateInfo.newBuilder().addSgvDynamicValueMap(scalarValue).build();
+        // Phlogiston is a Natlan-only team value. Pushing it everywhere made the client draw the
+        // phlogiston gauge in every region, so it is only synced while the player is in Natlan.
+        AbilitySyncStateInfo phlogiston;
+        if (emu.grasscutter.game.world.RegionGate.inNatlan(player)) {
+            AbilityScalarValueEntryOuterClass.AbilityScalarValueEntry scalarValue = AbilityScalarValueEntryOuterClass.AbilityScalarValueEntry.newBuilder()
+                    .setKey(AbilityStringOuterClass.AbilityString.newBuilder().setHash(Utils.abilityHash("SGV_PlayerTeam_Phlogiston"))
+                            .setStr("SGV_PlayerTeam_Phlogiston")
+                            .build())
+                    .setFloatValue(player.getPhlogistonValue())
+                    .build();
+            phlogiston = AbilitySyncStateInfo.newBuilder().addSgvDynamicValueMap(scalarValue).build();
+        } else {
+            phlogiston = AbilitySyncStateInfo.newBuilder().build();
+        }
 
         SyncTeamEntityNotify.Builder proto =
                 SyncTeamEntityNotify.newBuilder().setSceneId(DomainDungeonHelper.notifySceneId(player));

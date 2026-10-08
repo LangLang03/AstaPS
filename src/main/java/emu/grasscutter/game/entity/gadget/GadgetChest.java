@@ -59,12 +59,15 @@ public class GadgetChest extends GadgetContent {
                     return false;
                 }
                 if (req.getOpType() == InterOpTypeOuterClass.InterOpType.InterOpType_INTER_OP_START) {
+                    // Acknowledge the start so the client plays the chest-open animation, then fall
+                    // through and settle in the same request. Returning here left the client with a
+                    // lone START and no FINISH, so the animation never completed and no loot was
+                    // granted unless the client happened to send a second, non-START request.
                     player.sendPacket(
                             new PacketGadgetInteractRsp(
                                     getGadget(),
                                     InteractTypeOuterClass.InteractType.InteractType_INTERACT_OPEN_CHEST,
                                     InterOpTypeOuterClass.InterOpType.InterOpType_INTER_OP_START));
-                    return false;
                 }
                 int resinCost = meta.boss_chest.resin > 0 ? meta.boss_chest.resin : 40;
                 boolean spent = player.getResinManager().useResin(resinCost);
@@ -128,12 +131,13 @@ public class GadgetChest extends GadgetContent {
                 return false;
             }
             if (req.getOpType() == InterOpTypeOuterClass.InterOpType.InterOpType_INTER_OP_START) {
+                // Same as the boss-chest path: acknowledge the start for the animation, then settle
+                // in this same request instead of returning with only a START sent.
                 player.sendPacket(
                         new PacketGadgetInteractRsp(
                                 getGadget(),
                                 InteractTypeOuterClass.InteractType.InteractType_INTERACT_OPEN_CHEST,
                                 InterOpTypeOuterClass.InterOpType.InterOpType_INTER_OP_START));
-                return false;
             }
             WorldChestLootHelper.grant(player, getGadget());
             finishOpen(player, meta);
@@ -161,7 +165,6 @@ public class GadgetChest extends GadgetContent {
                                 getGadget(),
                                 InteractTypeOuterClass.InteractType.InteractType_INTERACT_OPEN_CHEST,
                                 InterOpTypeOuterClass.InterOpType.InterOpType_INTER_OP_START));
-                return false;
             }
             WorldChestLootHelper.grant(player, getGadget());
             finishOpen(player, null);
@@ -170,12 +173,13 @@ public class GadgetChest extends GadgetContent {
 
         if (req.getOpType() == InterOpTypeOuterClass.InterOpType.InterOpType_INTER_OP_START
                 && handler.isTwoStep()) {
+            // Two-step chests still acknowledge the start, then settle below so a client that only
+            // ever sends START still gets its loot.
             player.sendPacket(
                     new PacketGadgetInteractRsp(
                             getGadget(),
                             InteractTypeOuterClass.InteractType.InteractType_INTERACT_OPEN_CHEST,
                             InterOpTypeOuterClass.InterOpType.InterOpType_INTER_OP_START));
-            return false;
         }
 
         boolean success;
@@ -209,12 +213,14 @@ public class GadgetChest extends GadgetContent {
 
     private void finishOpen(Player player, SceneGadget sceneGadget) {
         EntityGadget entityGadget = getGadget();
-        entityGadget.updateState(CHEST_OPENED_STATE);
+        // Send FINISH before flipping the gadget state. Mutating the state first made the client
+        // see an already-opened chest by the time FINISH arrived, which skipped the open animation.
         player.sendPacket(
                 new PacketGadgetInteractRsp(
                         (EntityBaseGadget) entityGadget,
                         InteractTypeOuterClass.InteractType.InteractType_INTERACT_OPEN_CHEST,
                         InterOpTypeOuterClass.InterOpType.InterOpType_INTER_OP_FINISH));
+        entityGadget.updateState(CHEST_OPENED_STATE);
         int configId = sceneGadget != null ? sceneGadget.config_id : entityGadget.getConfigId();
         try {
             player.sendPacket(
@@ -253,8 +259,9 @@ public class GadgetChest extends GadgetContent {
             boolean bossFlower =
                     entityGadget.getMetaGadget() != null
                             && entityGadget.getMetaGadget().boss_chest != null;
-            // Scene scheduler ticks once per scene tick (~1s); 2 ≈ brief open animation then vanish.
-            int delayTicks = bossFlower ? 0 : 2;
+            // Scene scheduler ticks once per scene tick (~1s). The chest must stay alive long
+            // enough for the client to finish the open animation; 2 ticks removed it mid-animation.
+            int delayTicks = bossFlower ? 3 : 6;
             int entityId = entityGadget.getId();
             Runnable despawn =
                     () -> {
